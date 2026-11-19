@@ -189,6 +189,7 @@
     line-height: 1.45;
   }
   .adv-hint.ok { color: #6ee7b7; }
+  .adv-hint.warn { color: #fcd34d; }
 
   .btn-row { display: flex; gap: 8px; }
   .btn-primary {
@@ -558,11 +559,28 @@
       <input type="number" id="seed" placeholder="留空表示每次随机生成" />
     </div>
 
-    <details class="adv-box">
+    <details class="adv-box" id="advBox">
       <summary>
-        <span>高级参数（Shift / SLG 跳层引导）</span>
+        <span>高级参数（采样器 / SGM 调度 / Shift / SLG）</span>
         <span style="font-size:11px;">展开 ▾</span>
       </summary>
+      <div class="row" style="margin-bottom:8px;">
+        <div>
+          <label><span>采样器（Sampler）</span></label>
+          <select id="sampler">
+            <option value="euler" selected>Euler（官方默认 · 最快）</option>
+            <option value="heun">Heun（二阶修正 · 2× 耗时）</option>
+            <option value="heunpp2">Heun++2（三阶极致 · 3× 耗时）</option>
+          </select>
+        </div>
+        <div>
+          <label><span>调度器（Scheduler）</span></label>
+          <select id="schedule">
+            <option value="default" selected>Default / Simple（官方）</option>
+            <option value="sgm_uniform">SGM Uniform（贴吧推荐）</option>
+          </select>
+        </div>
+      </div>
       <div class="row">
         <div>
           <label><span>Scheduler Shift</span></label>
@@ -579,8 +597,8 @@
         <button class="chip" type="button" data-slg="26">层 26</button>
         <button class="chip" type="button" data-slg="">关闭 SLG（更写实）</button>
       </div>
-      <div class="adv-hint">
-        默认 Shift=5.0、跳层 22；启用 4/8 步 Turbo LoRA（CFG=1.0）时会自动跳过负向分支与 SLG。
+      <div class="adv-hint" id="samplerHint">
+        Heun / Heun++2 会自动禁用 Spectrum 跳步并做满算高阶积分（仅推荐 40~50 步无 LoRA 精修时使用，支持随时点取消）。
       </div>
     </details>
 
@@ -679,11 +697,26 @@ function parseSkipLayers(raw) {
 function updateLoraHint() {
   const lid = $("loraSelect").value;
   const isNone = !lid || lid === "none";
+  const smp = $("sampler").value;
   $("loraStrength").disabled = isNone;
   const hint = $("loraHint");
+  const sHint = $("samplerHint");
+  if (!isNone && smp !== "euler") {
+    hint.className = "adv-hint warn";
+    hint.textContent = `⚠️ 当前挂载了 Turbo LoRA [${lid}]，不建议配高阶采样器 ${smp}（易偏色且变慢）；请切回 Euler 或关闭 LoRA。`;
+    sHint.className = "adv-hint warn";
+    sHint.textContent = "⚠️ 4/8 步蒸馏 LoRA 仅适配 Euler 采样器；玩 Heun++2 + SGM 请先选「不使用 LoRA」+ 40~50 步。";
+    return;
+  }
+  sHint.className = "adv-hint";
+  sHint.textContent = smp === "euler"
+    ? "Heun / Heun++2 会自动禁用 Spectrum 跳步并做满算高阶积分（仅推荐 40~50 步无 LoRA 精修时使用，支持随时点取消）。"
+    : `已启用高阶采样器 [${smp} + ${$("schedule").value}]：每步多阶校正，自动满算无跳步（50 步 Heun++2 约 ~90s，可随时取消）。`;
   if (isNone) {
     hint.className = "adv-hint";
-    hint.textContent = "50 步精修模式：可搭配 Spectrum / Turbo 跳步加速与负面提示词（推荐 CFG=3.0）。";
+    hint.textContent = smp === "euler"
+      ? "50 步精修模式：可搭配 Spectrum / Turbo 跳步加速与负面提示词（推荐 CFG=3.0）。"
+      : `高阶精修模式（${smp} + ${$("schedule").value}）：自动满算无跳步，推荐 40~50 步、CFG=3.0。`;
   } else {
     const info = modelCatalog.loras.find((l) => l.id === lid);
     const steps = info?.rec_steps || Number($("steps").value || 8);
@@ -696,9 +729,16 @@ function highlightActivePreset() {
   const m = $("baseModel").value;
   const l = $("loraSelect").value;
   const s = Number($("steps").value);
+  const smp = $("sampler").value;
+  const sch = $("schedule").value;
   document.querySelectorAll("#presetChips .chip").forEach((btn) => {
     const p = modelCatalog.presets.find((x) => x.id === btn.dataset.presetId);
-    const match = p && p.model === m && p.lora === l && Math.abs(p.steps - s) <= 2;
+    const match = p
+      && p.model === m
+      && p.lora === l
+      && (p.sampler || "euler") === smp
+      && (p.schedule || "default") === sch
+      && Math.abs(p.steps - s) <= 2;
     btn.classList.toggle("active", Boolean(match));
   });
 }
@@ -709,10 +749,13 @@ function applyPreset(p) {
   $("loraSelect").value = p.lora;
   $("loraStrength").value = p.lora_strength ?? 1.0;
   $("mode").value = p.mode || "exact";
+  $("sampler").value = p.sampler || "euler";
+  $("schedule").value = p.schedule || "default";
   $("steps").value = p.steps;
   $("cfg").value = p.cfg;
   $("shift").value = p.shift ?? 5.0;
   $("skipLayers").value = Array.isArray(p.uncond_skip_layers) ? p.uncond_skip_layers.join(",") : "";
+  if (p.sampler && p.sampler !== "euler") $("advBox").open = true;
   updateLoraHint();
   highlightActivePreset();
 }
@@ -826,6 +869,15 @@ $("loraSelect").addEventListener("change", () => {
 
 $("baseModel").addEventListener("change", highlightActivePreset);
 $("steps").addEventListener("change", highlightActivePreset);
+$("sampler").addEventListener("change", () => {
+  if ($("sampler").value !== "euler") $("mode").value = "exact";
+  updateLoraHint();
+  highlightActivePreset();
+});
+$("schedule").addEventListener("change", () => {
+  updateLoraHint();
+  highlightActivePreset();
+});
 
 async function checkHealth() {
   try {
@@ -889,7 +941,10 @@ $("loadGalleryAuthBtn").addEventListener("click", () => loadGallery(true));
 function formatModelTag(meta) {
   const m = meta.model === "kromoss" ? "Kromoss" : (meta.model === "moss-image-sft" || !meta.model ? "SFT" : meta.model);
   if (meta.lora && meta.lora !== "none") return `${m}+${meta.lora}`;
-  return `${m}·${meta.mode || "spectrum"}`;
+  if (meta.sampler && meta.sampler !== "euler") {
+    return `${m}·${meta.sampler}${meta.schedule === "sgm_uniform" ? "+SGM" : ""}`;
+  }
+  return `${m}·${meta.mode || "spectrum"}${meta.schedule === "sgm_uniform" ? "+SGM" : ""}`;
 }
 
 function applyParams(meta) {
@@ -905,6 +960,8 @@ function applyParams(meta) {
   }
   if (meta.lora_strength != null) $("loraStrength").value = meta.lora_strength;
   if (meta.mode) $("mode").value = meta.mode;
+  $("sampler").value = meta.sampler || "euler";
+  $("schedule").value = meta.schedule || "default";
   if (meta.steps) $("steps").value = meta.steps;
   if (meta.cfg) $("cfg").value = meta.cfg;
   if (meta.shift) $("shift").value = meta.shift;
@@ -1166,6 +1223,8 @@ async function generate() {
     lora: $("loraSelect").value || "none",
     lora_strength: Number($("loraStrength").value || 1.0),
     mode: $("mode").value,
+    sampler: $("sampler").value || "euler",
+    schedule: $("schedule").value || "default",
     size: `${w}x${h}`,
     steps: Number($("steps").value || 50),
     cfg: Number($("cfg").value || 3.0),

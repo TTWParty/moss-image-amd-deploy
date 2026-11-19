@@ -5,11 +5,14 @@ import numpy as np
 import torch
 from torch.nn import functional as F
 from diffusers.models.modeling_outputs import Transformer2DModelOutput
+from diffusers.utils.torch_utils import randn_tensor
 from safetensors.torch import load_file
 
 FP8_DTYPE = torch.float8_e4m3fnuz
 FP8_MAX = float(torch.finfo(FP8_DTYPE).max)  # AMD CDNA 3 fnuz = 240.0
 LORA_PROJS = ("q", "k", "v", "o", "ffn_up_gate", "ffn_down")
+SAMPLERS = ("euler", "heun", "heunpp2")
+SCHEDULES = ("default", "sgm_uniform")
 
 
 def _rms_norm(x, weight):
@@ -572,3 +575,143 @@ def optimize_pipeline(pipe, precision="int8", use_compile=True):
 
     optimize_transformer(pipe.transformer, precision=precision, use_compile=use_compile)
     return pipe
+
+
+def compute_sigmas(pipe, num_inference_steps: int, shift: float = 5.0, schedule: str = "default"):
+    """Compute Flow-Matching sigma schedule ending in 0.0 ('default' or ComfyUI 'sgm_uniform')."""
+    if schedule == "sgm_uniform":
+        s = float(shift)
+        total = float(getattr(pipe.scheduler.config, "num_train_timesteps", 1000))
+
+        def _shift_fn(u: float) -> float:
+            return u if s == 1.0 else (s * u / (1.0 + (s - 1.0) * u))
+
+        sigma_min = _shift_fn(1.0 / total)
+        us = torch.linspace(1.0, sigma_min, int(num_inference_steps) + 1, dtype=torch.float64)[:-1]
+        return [_shift_fn(float(u)) for u in us] + [0.0]
+
+    # Default official MOSSImageScheduler grid
+    sched = type(pipe.scheduler).from_config(pipe.scheduler.config, shift=float(shift))
+    sched.set_timesteps(int(num_inference_steps), device="cpu")
+    return [float(x) for x in sched.sigmas.tolist()]
+
+
+@torch.no_grad()
+def sample_flow_matching(
+    pipe,
+    prompt_embeds,
+    prompt_attention_mask,
+    negative_prompt_embeds=None,
+    negative_prompt_attention_mask=None,
+    height: int = 1024,
+    width: int = 1024,
+    num_inference_steps: int = 50,
+    guidance_scale: float = 3.0,
+    shift: float = 5.0,
+    sampler: str = "euler",
+    schedule: str = "default",
+    uncond_skip_layers=None,
+    generator=None,
+    step_callback=None,
+    cancel_check=None,
+):
+    """Flow-Matching ODE sampler supporting Euler, 2nd-order Heun, and ComfyUI Heun++2 with Default/SGM schedules."""
+    device = pipe._execution_device
+    positive = prompt_embeds.to(device)
+    positive_mask = (
+        prompt_attention_mask.to(device)
+        if prompt_attention_mask is not None
+        else torch.ones(positive.shape[:2], dtype=torch.bool, device=device)
+    )
+
+    do_cfg = abs(float(guidance_scale) - 1.0) > 1e-6
+    negative = None
+    negative_mask = None
+    if do_cfg:
+        negative = negative_prompt_embeds.to(device)
+        negative_mask = (
+            negative_prompt_attention_mask.to(device)
+            if negative_prompt_attention_mask is not None
+            else torch.ones(negative.shape[:2], dtype=torch.bool, device=device)
+        )
+
+    skip_tuple = tuple(uncond_skip_layers) if uncond_skip_layers else ()
+    shape = (positive.shape[0], pipe.transformer.config.latent_channels, height // 16, width // 16)
+    x = randn_tensor(shape, generator=generator, device=device, dtype=torch.float32)
+
+    sigmas = compute_sigmas(pipe, num_inference_steps, shift=shift, schedule=schedule)
+    num_steps = len(sigmas) - 1
+    s_end = sigmas[-1]
+    nfe = 0
+
+    def _eval_velocity(lat, sigma_val):
+        nonlocal nfe
+        if cancel_check is not None:
+            cancel_check()
+        ts = torch.tensor([float(sigma_val) * 1000.0], device=device, dtype=torch.float32)
+        pred = pipe.transformer(lat, ts, positive, positive_mask).sample.float()
+        if do_cfg:
+            if cancel_check is not None:
+                cancel_check()
+            skip_kwargs = {"skip_layers": skip_tuple} if skip_tuple else {}
+            uncond = pipe.transformer(lat, ts, negative, negative_mask, **skip_kwargs).sample.float()
+            pred = uncond + float(guidance_scale) * (pred - uncond)
+        nfe += 1
+        return pred
+
+    for i in range(num_steps):
+        if step_callback is not None:
+            step_callback("denoising", i + 1, num_steps)
+        s_i = sigmas[i]
+        s_next = sigmas[i + 1]
+        dt = s_next - s_i
+
+        d = _eval_velocity(x, s_i)
+
+        if sampler == "euler" or s_next == s_end:
+            x = x + d * dt
+        elif sampler == "heun":
+            x_2 = x + d * dt
+            d_2 = _eval_velocity(x_2, s_next)
+            x = x + 0.5 * (d + d_2) * dt
+        elif sampler == "heunpp2":
+            if i + 2 < len(sigmas) and sigmas[i + 2] == s_end:
+                # Second-to-last step: weighted 2-stage Heun (matches ComfyUI sample_heunpp2)
+                x_2 = x + d * dt
+                d_2 = _eval_velocity(x_2, s_next)
+                w = 2.0 * sigmas[0]
+                w2 = s_next / w
+                w1 = 1.0 - w2
+                x = x + (w1 * d + w2 * d_2) * dt
+            else:
+                # 3-stage Heun++2 (matches ComfyUI sample_heunpp2)
+                x_2 = x + d * dt
+                d_2 = _eval_velocity(x_2, s_next)
+                s_next2 = sigmas[i + 2]
+                dt_2 = s_next2 - s_next
+                x_3 = x_2 + d_2 * dt_2
+                d_3 = _eval_velocity(x_3, s_next2)
+                w = 3.0 * sigmas[0]
+                w2 = s_next / w
+                w3 = s_next2 / w
+                w1 = 1.0 - w2 - w3
+                x = x + (w1 * d + w2 * d_2 + w3 * d_3) * dt
+        else:
+            raise ValueError(f"Unsupported sampler: {sampler}")
+
+    if cancel_check is not None:
+        cancel_check()
+    if step_callback is not None:
+        step_callback("decoding", num_steps, num_steps)
+
+    # Decode with FLUX.2 VAE (BN denormalize + 2x2 unpatchify, matching pipeline_moss_image.py)
+    z = x.to(dtype=pipe.vae.dtype)
+    bn = pipe.vae.bn
+    eps = pipe.vae.config.batch_norm_eps
+    z = z * (bn.running_var + eps).sqrt().to(z).view(1, -1, 1, 1) + bn.running_mean.to(z).view(1, -1, 1, 1)
+    b, c, lh, lw = z.shape
+    z = z.reshape(b, c // 4, 2, 2, lh, lw).permute(0, 1, 4, 2, 5, 3).reshape(b, c // 4, 2 * lh, 2 * lw)
+    images = pipe.vae.decode(z, return_dict=False)[0].clamp(-1, 1)
+    img = pipe.image_processor.postprocess(images, output_type="pil")[0]
+    return img, nfe
+

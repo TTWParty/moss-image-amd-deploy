@@ -18,11 +18,14 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from opt_moss import (
+    SAMPLERS,
+    SCHEDULES,
     SPECTRUM_PRESETS,
     begin_generation,
     load_lora_weights,
     optimize_pipeline,
     optimize_transformer,
+    sample_flow_matching,
     spectrum_stats,
 )
 
@@ -333,6 +336,8 @@ def _build_catalog() -> dict:
             "lora": kromoss_dmd2_id,
             "lora_strength": 1.0,
             "mode": "exact",
+            "sampler": "euler",
+            "schedule": "default",
             "steps": 8,
             "cfg": 1.0,
             "shift": 5.0,
@@ -346,6 +351,8 @@ def _build_catalog() -> dict:
             "lora": "sft-4step",
             "lora_strength": 1.0,
             "mode": "exact",
+            "sampler": "euler",
+            "schedule": "default",
             "steps": 4,
             "cfg": 1.0,
             "shift": 5.0,
@@ -359,6 +366,8 @@ def _build_catalog() -> dict:
             "lora": "sft-8step",
             "lora_strength": 1.0,
             "mode": "exact",
+            "sampler": "euler",
+            "schedule": "default",
             "steps": 8,
             "cfg": 1.0,
             "shift": 5.0,
@@ -367,11 +376,13 @@ def _build_catalog() -> dict:
         },
         {
             "id": "kromoss-50step",
-            "label": "🎨 Kromoss 50步（极致写实精修）",
+            "label": "🎨 Kromoss 50步（写实精修）",
             "model": "kromoss",
             "lora": "none",
             "lora_strength": 1.0,
             "mode": "spectrum",
+            "sampler": "euler",
+            "schedule": "default",
             "steps": 50,
             "cfg": 3.0,
             "shift": 5.0,
@@ -380,16 +391,33 @@ def _build_catalog() -> dict:
         },
         {
             "id": "sft-50step",
-            "label": "🎨 SFT 50步（密集中文海报精修）",
+            "label": "🎨 SFT 50步（密集中文海报）",
             "model": "moss-image-sft",
             "lora": "none",
             "lora_strength": 1.0,
             "mode": "spectrum",
+            "sampler": "euler",
+            "schedule": "default",
             "steps": 50,
             "cfg": 3.0,
             "shift": 5.0,
             "uncond_skip_layers": [22],
             "available": "moss-image-sft" in TRANSFORMERS,
+        },
+        {
+            "id": "heunpp2-sgm",
+            "label": "💎 Heun++2 + SGM（50步极致画质 · ~90s）",
+            "model": "kromoss" if "kromoss" in TRANSFORMERS else "moss-image-sft",
+            "lora": "none",
+            "lora_strength": 1.0,
+            "mode": "exact",
+            "sampler": "heunpp2",
+            "schedule": "sgm_uniform",
+            "steps": 50,
+            "cfg": 3.0,
+            "shift": 5.0,
+            "uncond_skip_layers": [22],
+            "available": True,
         },
     ]
     return {
@@ -442,6 +470,8 @@ class ImageRequest(BaseModel):
     size: str = "1024x1024"
     response_format: str = "b64_json"
     mode: str = "spectrum"  # spectrum | turbo | exact
+    sampler: str = "euler"  # euler | heun | heunpp2
+    schedule: str = "default"  # default | sgm_uniform
     steps: int = Field(default=50, ge=1, le=100)
     cfg: float = Field(default=3.0, ge=1.0, le=15.0)
     shift: float = Field(default=5.0, ge=0.5, le=15.0)
@@ -476,8 +506,14 @@ def _save_output(png_bytes: bytes, img: Image.Image, meta: dict) -> str:
     tag = meta.get("model", "sft")
     if meta.get("lora") and meta["lora"] != "none":
         tag = f"{tag}_{meta['lora']}"
+    elif meta.get("sampler") and meta["sampler"] != "euler":
+        tag = f"{tag}_{meta['sampler']}"
+        if meta.get("schedule") == "sgm_uniform":
+            tag += "_sgm"
     else:
         tag = f"{tag}_{meta['mode']}"
+        if meta.get("schedule") == "sgm_uniform":
+            tag += "_sgm"
     safe_tag = "".join(c if (c.isalnum() or c in "-_") else "_" for c in tag)[:40]
     fname = f"{ts}_{PRECISION}_{safe_tag}_{meta['size']}_s{meta['seed']}.png"
     png_path = OUT_DIR / fname
@@ -499,6 +535,13 @@ def _save_output(png_bytes: bytes, img: Image.Image, meta: dict) -> str:
 def _run_generate(req: ImageRequest, job: Optional[dict] = None):
     if req.mode not in SPECTRUM_PRESETS:
         raise HTTPException(status_code=400, detail="mode 仅支持 spectrum / turbo / exact")
+    sampler = (req.sampler or "euler").strip().lower()
+    if sampler not in SAMPLERS:
+        raise HTTPException(status_code=400, detail=f"sampler 仅支持 {SAMPLERS}")
+    schedule = (req.schedule or "default").strip().lower()
+    if schedule not in SCHEDULES:
+        raise HTTPException(status_code=400, detail=f"schedule 仅支持 {SCHEDULES}")
+
     model_id, lora_id, lora_layers = _resolve_model_and_lora(req)
     w, h = _parse_size(req.size)
     skip_layers = _validate_skip_layers(req.uncond_skip_layers)
@@ -508,6 +551,9 @@ def _run_generate(req: ImageRequest, job: Optional[dict] = None):
         if job is not None:
             with JOBS_LOCK:
                 job.update(kwargs)
+
+    # 高阶采样器 (Heun / Heun++2) 需在每步内多点试探，必须关闭 Spectrum 跳步预测以保持精度
+    effective_mode = "exact" if sampler != "euler" else req.mode
 
     results = []
     with GEN_LOCK:
@@ -536,30 +582,25 @@ def _run_generate(req: ImageRequest, job: Optional[dict] = None):
             t0 = time.perf_counter()
             begin_generation(
                 pipe,
-                mode=req.mode,
+                mode=effective_mode,
                 total_steps=req.steps,
                 lora_layers=lora_layers,
                 lora_strength=req.lora_strength,
             )
             _update_job(stage="denoising", image_index=i + 1, total_images=req.n, step=0, total_steps=req.steps)
 
-            orig_pb = pipe.progress_bar
+            use_custom = (sampler != "euler") or (schedule != "default")
+            nfe_count = None
+            if use_custom:
+                def _step_cb(stage, step_idx, total_s):
+                    _update_job(stage=stage, step=step_idx, total_steps=total_s)
 
-            def _tracked_pb(items):
-                total = len(items) if hasattr(items, "__len__") else req.steps
-                for idx, item in enumerate(orig_pb(items)):
+                def _cancel_chk():
                     if cancel_evt and cancel_evt.is_set():
                         raise _JobCancelled()
-                    _update_job(stage="denoising", step=idx + 1, total_steps=total)
-                    yield item
-                if cancel_evt and cancel_evt.is_set():
-                    raise _JobCancelled()
-                _update_job(stage="decoding", step=total, total_steps=total)
 
-            pipe.progress_bar = _tracked_pb
-            try:
-                img = pipe(
-                    prompt=None,
+                img, nfe_count = sample_flow_matching(
+                    pipe,
                     prompt_embeds=pos_e,
                     prompt_attention_mask=pos_m,
                     negative_prompt_embeds=neg_e,
@@ -568,15 +609,55 @@ def _run_generate(req: ImageRequest, job: Optional[dict] = None):
                     width=w,
                     num_inference_steps=req.steps,
                     guidance_scale=float(req.cfg) if use_cfg else 1.0,
+                    shift=float(req.shift),
+                    sampler=sampler,
+                    schedule=schedule,
                     uncond_skip_layers=effective_skip,
                     generator=torch.Generator("cpu").manual_seed(seed),
-                ).images[0]
-            finally:
-                pipe.progress_bar = orig_pb
+                    step_callback=_step_cb,
+                    cancel_check=_cancel_chk,
+                )
+            else:
+                orig_pb = pipe.progress_bar
+
+                def _tracked_pb(items):
+                    total = len(items) if hasattr(items, "__len__") else req.steps
+                    for idx, item in enumerate(orig_pb(items)):
+                        if cancel_evt and cancel_evt.is_set():
+                            raise _JobCancelled()
+                        _update_job(stage="denoising", step=idx + 1, total_steps=total)
+                        yield item
+                    if cancel_evt and cancel_evt.is_set():
+                        raise _JobCancelled()
+                    _update_job(stage="decoding", step=total, total_steps=total)
+
+                pipe.progress_bar = _tracked_pb
+                try:
+                    img = pipe(
+                        prompt=None,
+                        prompt_embeds=pos_e,
+                        prompt_attention_mask=pos_m,
+                        negative_prompt_embeds=neg_e,
+                        negative_prompt_attention_mask=neg_m,
+                        height=h,
+                        width=w,
+                        num_inference_steps=req.steps,
+                        guidance_scale=float(req.cfg) if use_cfg else 1.0,
+                        uncond_skip_layers=effective_skip,
+                        generator=torch.Generator("cpu").manual_seed(seed),
+                    ).images[0]
+                finally:
+                    pipe.progress_bar = orig_pb
 
             torch.cuda.synchronize()
             dt = time.perf_counter() - t0
-            stats = spectrum_stats(pipe)
+            if sampler != "euler":
+                sched_txt = "SGM" if schedule == "sgm_uniform" else "Default"
+                stats = f"{sampler}+{sched_txt}（{req.steps} 步 / 等效 {nfe_count} 次评估）"
+            else:
+                stats = spectrum_stats(pipe)
+                if schedule == "sgm_uniform":
+                    stats = f"SGM · {stats}"
             buf = io.BytesIO()
             img.save(buf, format="PNG")
             png_bytes = buf.getvalue()
@@ -592,7 +673,9 @@ def _run_generate(req: ImageRequest, job: Optional[dict] = None):
                         "model": model_id,
                         "lora": lora_id,
                         "lora_strength": float(req.lora_strength),
-                        "mode": req.mode,
+                        "mode": effective_mode,
+                        "sampler": sampler,
+                        "schedule": schedule,
                         "size": f"{w}x{h}",
                         "steps": req.steps,
                         "cfg": req.cfg,
@@ -705,6 +788,10 @@ def create_job(
     _check_auth(authorization, x_api_key)
     if req.mode not in SPECTRUM_PRESETS:
         raise HTTPException(status_code=400, detail="mode 仅支持 spectrum / turbo / exact")
+    if (req.sampler or "euler").strip().lower() not in SAMPLERS:
+        raise HTTPException(status_code=400, detail=f"sampler 仅支持 {SAMPLERS}")
+    if (req.schedule or "default").strip().lower() not in SCHEDULES:
+        raise HTTPException(status_code=400, detail=f"schedule 仅支持 {SCHEDULES}")
     _resolve_model_and_lora(req)
     _parse_size(req.size)
     _validate_skip_layers(req.uncond_skip_layers)
@@ -811,6 +898,8 @@ def list_gallery(
             "lora": meta.get("lora", "none"),
             "lora_strength": meta.get("lora_strength", 1.0),
             "mode": meta.get("mode", "spectrum"),
+            "sampler": meta.get("sampler", "euler"),
+            "schedule": meta.get("schedule", "default"),
             "size": meta.get("size", ""),
             "steps": meta.get("steps", 50),
             "cfg": meta.get("cfg", 3.0),
