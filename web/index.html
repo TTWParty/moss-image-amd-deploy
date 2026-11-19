@@ -1,0 +1,608 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>MOSS-Image 工作台</title>
+<style>
+  :root {
+    --bg: #0f1117;
+    --panel: #171a23;
+    --panel-2: #1f2430;
+    --border: #2c3345;
+    --text: #e8ecf4;
+    --muted: #94a0b8;
+    --accent: #4f8cff;
+    --accent-hover: #3b78f0;
+    --green: #34d399;
+    --red: #f87171;
+    --radius: 12px;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Segoe UI", sans-serif;
+    line-height: 1.5;
+  }
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 20px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-weight: 600;
+    font-size: 17px;
+  }
+  .badge {
+    font-size: 12px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: rgba(79, 140, 255, 0.16);
+    color: #8ab4ff;
+    border: 1px solid rgba(79, 140, 255, 0.35);
+    font-weight: 500;
+  }
+  .status {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    color: var(--muted);
+  }
+  .dot {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: var(--muted);
+  }
+  .dot.ok { background: var(--green); box-shadow: 0 0 8px rgba(52, 211, 153, 0.7); }
+  .dot.err { background: var(--red); }
+
+  .layout {
+    display: grid;
+    grid-template-columns: 390px 1fr;
+    gap: 18px;
+    max-width: 1480px;
+    margin: 0 auto;
+    padding: 18px;
+    min-height: calc(100vh - 58px);
+  }
+  @media (max-width: 920px) {
+    .layout { grid-template-columns: 1fr; padding: 12px; }
+  }
+
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px;
+  }
+  .controls {
+    display: flex;
+    flex-direction: column;
+    gap: 13px;
+    height: fit-content;
+  }
+  label {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 13px;
+    color: var(--muted);
+    margin-bottom: 5px;
+  }
+  textarea, input[type="text"], input[type="password"], input[type="number"], select {
+    width: 100%;
+    background: var(--panel-2);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 9px 11px;
+    font-size: 14px;
+    font-family: inherit;
+    outline: none;
+    transition: border-color 0.15s;
+  }
+  textarea:focus, input:focus, select:focus { border-color: var(--accent); }
+  textarea { resize: vertical; }
+
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .row-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+
+  .chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 6px;
+  }
+  .chip {
+    background: var(--panel-2);
+    color: var(--muted);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 4px 8px;
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .chip:hover, .chip.active {
+    color: #fff;
+    border-color: var(--accent);
+    background: rgba(79, 140, 255, 0.18);
+  }
+
+  .btn-primary {
+    width: 100%;
+    padding: 12px;
+    border: none;
+    border-radius: 10px;
+    background: var(--accent);
+    color: #fff;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s, opacity 0.15s;
+  }
+  .btn-primary:hover:not(:disabled) { background: var(--accent-hover); }
+  .btn-primary:disabled { opacity: 0.55; cursor: not-allowed; }
+
+  .btn-sm {
+    padding: 5px 10px;
+    border-radius: 7px;
+    border: 1px solid var(--border);
+    background: var(--panel-2);
+    color: var(--text);
+    font-size: 12px;
+    cursor: pointer;
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .btn-sm:hover { border-color: var(--accent); color: #fff; }
+
+  .stage {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .preview-box {
+    min-height: 420px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+  }
+  .placeholder {
+    text-align: center;
+    color: var(--muted);
+    font-size: 14px;
+    padding: 40px 20px;
+  }
+  .result-grid {
+    width: 100%;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 14px;
+  }
+  .img-card {
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+  .img-card img {
+    width: 100%;
+    height: auto;
+    display: block;
+    cursor: zoom-in;
+    background: #0a0c10;
+  }
+  .img-meta {
+    padding: 10px 12px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .error-banner {
+    display: none;
+    background: rgba(248, 113, 113, 0.14);
+    border: 1px solid rgba(248, 113, 113, 0.45);
+    color: #fecaca;
+    padding: 10px 12px;
+    border-radius: 8px;
+    font-size: 13px;
+  }
+  .history-title {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin: 0 0 10px 0;
+    font-size: 14px;
+    color: var(--muted);
+  }
+  .history-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+    gap: 10px;
+  }
+  .hist-item {
+    position: relative;
+    border-radius: 8px;
+    overflow: hidden;
+    border: 1px solid var(--border);
+    cursor: pointer;
+    aspect-ratio: 1 / 1;
+    background: #0a0c10;
+  }
+  .hist-item img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .hist-item span {
+    position: absolute;
+    bottom: 0; left: 0; right: 0;
+    background: rgba(0,0,0,0.68);
+    font-size: 11px;
+    padding: 2px 5px;
+    color: #dbe4ff;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* Lightbox */
+  .modal {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.88);
+    z-index: 999;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+  }
+  .modal.open { display: flex; }
+  .modal img { max-width: 96vw; max-height: 92vh; border-radius: 8px; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">
+    <span>MOSS-Image 工作台</span>
+    <span class="badge" id="precisionBadge">连接中...</span>
+  </div>
+  <div class="status">
+    <span class="dot" id="statusDot"></span>
+    <span id="statusText">正在检查服务状态...</span>
+  </div>
+</header>
+
+<main class="layout">
+  <section class="card controls">
+    <div id="authBox">
+      <label>
+        <span>访问密钥（API Key）</span>
+        <span style="font-size:11px;">自动保存在本机浏览器</span>
+      </label>
+      <input type="password" id="apiKey" placeholder="输入启动时设置的 MOSS_API_KEY" />
+    </div>
+
+    <div>
+      <label>
+        <span>正向提示词（支持中英文 / 换行排字 / JSON Layout）</span>
+        <button class="chip" type="button" id="demoPromptBtn">填入示例</button>
+      </label>
+      <textarea id="prompt" rows="5" placeholder="例如：单张完整照片，一位身穿白色毛衣的女孩在阳光咖啡馆窗边看书，自然光，胶片质感..."></textarea>
+    </div>
+
+    <div>
+      <label>
+        <span>负面提示词（可选）</span>
+        <button class="chip" type="button" id="antiCollageBtn">一键防拼图词</button>
+      </label>
+      <textarea id="negPrompt" rows="2" placeholder="不想出现的元素，例如 collage, split screen, worst quality"></textarea>
+    </div>
+
+    <div>
+      <label><span>速度与画质模式</span></label>
+      <select id="mode">
+        <option value="spectrum" selected>Spectrum（推荐 · ~15.8s · 4.25x 几乎无损）</option>
+        <option value="turbo">Turbo（极速抽卡 · ~12.5s · 5.38x）</option>
+        <option value="exact">Exact（50 步满算 · ~33.8s · 极致细节）</option>
+      </select>
+    </div>
+
+    <div>
+      <label><span>画布尺寸（16 的倍数）</span></label>
+      <div class="row">
+        <input type="number" id="width" value="896" step="16" min="256" max="2048" placeholder="宽" />
+        <input type="number" id="height" value="1152" step="16" min="256" max="2048" placeholder="高" />
+      </div>
+      <div class="chips" id="sizePresets">
+        <button class="chip" type="button" data-w="1024" data-h="1024">1:1 (1024)</button>
+        <button class="chip active" type="button" data-w="896" data-h="1152">3:4 人像</button>
+        <button class="chip" type="button" data-w="832" data-h="1216">2:3 竖图</button>
+        <button class="chip" type="button" data-w="1280" data-h="720">16:9 横图</button>
+        <button class="chip" type="button" data-w="1456" data-h="1456">1456 高清</button>
+      </div>
+    </div>
+
+    <div class="row-3">
+      <div>
+        <label><span>步数</span></label>
+        <input type="number" id="steps" value="50" min="1" max="100" />
+      </div>
+      <div>
+        <label><span>CFG</span></label>
+        <input type="number" id="cfg" value="4.0" step="0.5" min="1.0" max="15.0" />
+      </div>
+      <div>
+        <label><span>张数</span></label>
+        <input type="number" id="batchN" value="1" min="1" max="4" />
+      </div>
+    </div>
+
+    <div>
+      <label>
+        <span>随机种子（留空则随机）</span>
+        <button class="chip" type="button" id="clearSeedBtn">随机</button>
+      </label>
+      <input type="number" id="seed" placeholder="留空表示每次随机生成" />
+    </div>
+
+    <div class="error-banner" id="errorBox"></div>
+
+    <button class="btn-primary" id="genBtn" type="button">开始生成（Ctrl / Cmd + Enter）</button>
+  </section>
+
+  <section class="stage">
+    <div class="card preview-box" id="previewBox">
+      <div class="placeholder" id="placeholder">
+        输入提示词并点击「开始生成」<br />
+        <span style="font-size:12px;opacity:0.75;">人像建议用 3:4 竖图 + 一键防拼图词；中文字排版可用换行精确控制</span>
+      </div>
+      <div class="result-grid" id="resultGrid"></div>
+    </div>
+
+    <div class="card">
+      <div class="history-title">
+        <span>本次会话历史记录（点击可回看与复用参数）</span>
+        <button class="btn-sm" type="button" id="clearHistBtn">清空记录</button>
+      </div>
+      <div class="history-grid" id="historyGrid"></div>
+    </div>
+  </section>
+</main>
+
+<div class="modal" id="lightbox" onclick="this.classList.remove('open')">
+  <img id="lightboxImg" src="" alt="preview" />
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const STORAGE_KEY = "moss_ui_api_key";
+const historyItems = [];
+let timerId = null;
+
+$("apiKey").value = localStorage.getItem(STORAGE_KEY) || "";
+$("apiKey").addEventListener("input", (e) => {
+  localStorage.setItem(STORAGE_KEY, e.target.value.trim());
+});
+
+async function checkHealth() {
+  try {
+    const res = await fetch("/health");
+    const data = await res.json();
+    $("precisionBadge").textContent = `${(data.precision || "int8").toUpperCase()} · AMD ROCm`;
+    if (data.ready) {
+      $("statusDot").className = "dot ok";
+      $("statusText").textContent = "模型已就绪";
+    } else {
+      $("statusDot").className = "dot";
+      $("statusText").textContent = "模型加载/预热中...";
+      setTimeout(checkHealth, 3000);
+    }
+    if (data.auth_required === false) {
+      $("authBox").style.display = "none";
+    }
+  } catch (err) {
+    $("statusDot").className = "dot err";
+    $("statusText").textContent = "服务未连接";
+  }
+}
+
+$("sizePresets").addEventListener("click", (e) => {
+  const btn = e.target.closest(".chip");
+  if (!btn) return;
+  $("width").value = btn.dataset.w;
+  $("height").value = btn.dataset.h;
+  document.querySelectorAll("#sizePresets .chip").forEach((c) => c.classList.remove("active"));
+  btn.classList.add("active");
+});
+
+$("antiCollageBtn").addEventListener("click", () => {
+  $("negPrompt").value = "collage, grid, split screen, multi-panel, multiple views, diptych, triptych, photo strip, border, frame, worst quality, bad anatomy";
+});
+
+$("demoPromptBtn").addEventListener("click", () => {
+  $("prompt").value = 'A wide view of a refrigerator beside a kitchen counter with a fruit bowl. A small sticky note on the refrigerator door is handwritten in Chinese：“\n记得买牛奶和鸡蛋！\n牛奶两盒，鸡蛋一打。\n顺便带一袋面包。”';
+  $("width").value = 1024;
+  $("height").value = 1024;
+  $("cfg").value = 3.0;
+});
+
+$("clearSeedBtn").addEventListener("click", () => { $("seed").value = ""; });
+$("clearHistBtn").addEventListener("click", () => {
+  historyItems.length = 0;
+  $("historyGrid").innerHTML = "";
+});
+
+function showError(msg) {
+  const box = $("errorBox");
+  if (!msg) { box.style.display = "none"; return; }
+  box.textContent = msg;
+  box.style.display = "block";
+}
+
+function renderResults(items, reqMeta) {
+  $("placeholder").style.display = "none";
+  const grid = $("resultGrid");
+  grid.innerHTML = "";
+  items.forEach((item, idx) => {
+    const src = `data:image/png;base64,${item.b64_json}`;
+    const card = document.createElement("div");
+    card.className = "img-card";
+
+    const img = document.createElement("img");
+    img.src = src;
+    img.onclick = () => {
+      $("lightboxImg").src = src;
+      $("lightbox").classList.add("open");
+    };
+
+    const meta = document.createElement("div");
+    meta.className = "img-meta";
+    const info = document.createElement("span");
+    info.textContent = `耗时 ${item.elapsed_sec}s · seed=${item.seed} · ${item.stats || ""}`;
+
+    const actions = document.createElement("div");
+    actions.style.display = "flex";
+    actions.style.gap = "6px";
+
+    const reuseBtn = document.createElement("button");
+    reuseBtn.className = "btn-sm";
+    reuseBtn.type = "button";
+    reuseBtn.textContent = "固定此种子";
+    reuseBtn.onclick = () => { $("seed").value = item.seed; };
+
+    const dl = document.createElement("a");
+    dl.className = "btn-sm";
+    dl.href = src;
+    dl.download = `moss_${reqMeta.mode}_${reqMeta.size}_s${item.seed}.png`;
+    dl.textContent = "下载原图";
+
+    actions.append(reuseBtn, dl);
+    meta.append(info, actions);
+    card.append(img, meta);
+    grid.append(card);
+
+    historyItems.unshift({ src, item, reqMeta });
+  });
+  renderHistory();
+}
+
+function renderHistory() {
+  const hGrid = $("historyGrid");
+  hGrid.innerHTML = "";
+  historyItems.slice(0, 24).forEach((entry) => {
+    const div = document.createElement("div");
+    div.className = "hist-item";
+    div.title = entry.reqMeta.prompt;
+    const img = document.createElement("img");
+    img.src = entry.src;
+    const label = document.createElement("span");
+    label.textContent = `${entry.item.elapsed_sec}s · s${entry.item.seed}`;
+    div.append(img, label);
+    div.onclick = () => {
+      $("prompt").value = entry.reqMeta.prompt;
+      $("negPrompt").value = entry.reqMeta.negative_prompt;
+      $("mode").value = entry.reqMeta.mode;
+      $("cfg").value = entry.reqMeta.cfg;
+      $("steps").value = entry.reqMeta.steps;
+      $("seed").value = entry.item.seed;
+      const [w, h] = entry.reqMeta.size.split("x");
+      $("width").value = w;
+      $("height").value = h;
+      $("lightboxImg").src = entry.src;
+      $("lightbox").classList.add("open");
+    };
+    hGrid.append(div);
+  });
+}
+
+async function generate() {
+  const prompt = $("prompt").value.trim();
+  if (!prompt) { showError("请先输入提示词"); return; }
+  showError("");
+
+  const w = Math.max(256, Math.min(2048, Math.round(Number($("width").value || 1024) / 16) * 16));
+  const h = Math.max(256, Math.min(2048, Math.round(Number($("height").value || 1024) / 16) * 16));
+  $("width").value = w;
+  $("height").value = h;
+
+  const seedRaw = $("seed").value.trim();
+  const payload = {
+    prompt,
+    negative_prompt: $("negPrompt").value.trim(),
+    mode: $("mode").value,
+    size: `${w}x${h}`,
+    steps: Number($("steps").value || 50),
+    cfg: Number($("cfg").value || 3.0),
+    n: Number($("batchN").value || 1),
+    seed: seedRaw === "" ? null : Number(seedRaw),
+  };
+
+  const btn = $("genBtn");
+  btn.disabled = true;
+  const tStart = Date.now();
+  btn.textContent = "正在生成中... 0.0s";
+  timerId = setInterval(() => {
+    btn.textContent = `正在生成中... ${((Date.now() - tStart) / 1000).toFixed(1)}s`;
+  }, 100);
+
+  try {
+    const headers = { "Content-Type": "application/json" };
+    const key = $("apiKey").value.trim();
+    if (key) headers["Authorization"] = `Bearer ${key}`;
+
+    const res = await fetch("/v1/images/generations", {
+      method: "POST",
+      headers,
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      let msg = `请求失败 (HTTP ${res.status})`;
+      try {
+        const j = await res.json();
+        if (j.detail) msg += `：${j.detail}`;
+      } catch {}
+      throw new Error(msg);
+    }
+    const data = await res.json();
+    renderResults(data.data || [], payload);
+  } catch (err) {
+    showError(err.message || "生成失败，请检查网络连接与 API Key");
+  } finally {
+    clearInterval(timerId);
+    btn.disabled = false;
+    btn.textContent = "开始生成（Ctrl / Cmd + Enter）";
+  }
+}
+
+$("genBtn").addEventListener("click", generate);
+document.addEventListener("keydown", (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key === "Enter" && !$("genBtn").disabled) {
+    generate();
+  }
+});
+
+checkHealth();
+</script>
+</body>
+</html>

@@ -4,22 +4,30 @@ import os
 import random
 import threading
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
 import torch
 from diffusers import DiffusionPipeline
 from fastapi import FastAPI, Header, HTTPException, Response
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from opt_moss import SPECTRUM_PRESETS, begin_generation, optimize_pipeline, spectrum_stats
 
 BASE_DIR = Path(__file__).resolve().parent
 MODEL_DIR = os.environ.get("MOSS_MODEL_DIR", str(BASE_DIR / "MOSS-Image-SFT"))
+OUT_DIR = Path(os.environ.get("MOSS_OUT_DIR", str(BASE_DIR / "outputs")))
+WEB_INDEX = BASE_DIR / "web" / "index.html"
 API_KEY = os.environ.get("MOSS_API_KEY", "moss-secret-change-me")
 PRECISION = os.environ.get("MOSS_PRECISION", "int8")  # int8 | bf16 | fp8
+SAVE_OUTPUTS = os.environ.get("MOSS_SAVE_OUTPUTS", "1") != "0"
 
-app = FastAPI(title="MOSS-Image API (OpenAI Compatible)")
+if SAVE_OUTPUTS:
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+
+app = FastAPI(title="MOSS-Image Web UI & OpenAI-Compatible API")
 GEN_LOCK = threading.Lock()
 neg_cache = {}
 pipe = None
@@ -34,7 +42,7 @@ def _check_auth(authorization: Optional[str], x_api_key: Optional[str]):
     elif x_api_key:
         token = x_api_key.strip()
     if token != API_KEY:
-        raise HTTPException(status_code=401, detail="Invalid API key")
+        raise HTTPException(status_code=401, detail="API Key 错误或未填写")
 
 
 def _parse_size(size_str: str):
@@ -76,7 +84,7 @@ def _startup():
         uncond_skip_layers=[22], generator=torch.Generator("cpu").manual_seed(0),
     )
     torch.cuda.synchronize()
-    print("MOSS-Image API 已就绪！")
+    print("MOSS-Image Web UI & API 已就绪！")
 
 
 class ImageRequest(BaseModel):
@@ -118,13 +126,29 @@ def _run_generate(req: ImageRequest):
             dt = time.perf_counter() - t0
             buf = io.BytesIO()
             img.save(buf, format="PNG")
-            results.append((buf.getvalue(), seed, dt, spectrum_stats(pipe)))
+            png_bytes = buf.getvalue()
+            if SAVE_OUTPUTS:
+                ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                (OUT_DIR / f"{ts}_{PRECISION}_{req.mode}_{w}x{h}_s{seed}.png").write_bytes(png_bytes)
+            results.append((png_bytes, seed, dt, spectrum_stats(pipe)))
     return results
+
+
+@app.get("/")
+def web_ui():
+    if not WEB_INDEX.is_file():
+        raise HTTPException(status_code=404, detail="web/index.html not found")
+    return FileResponse(WEB_INDEX)
 
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "precision": PRECISION, "ready": pipe is not None}
+    return {
+        "status": "ok",
+        "precision": PRECISION,
+        "ready": pipe is not None,
+        "auth_required": bool(API_KEY),
+    }
 
 
 @app.post("/v1/images/generations")

@@ -62,10 +62,13 @@ moss-image-amd-deploy/
 ├── README.md        # 本文档
 ├── opt_moss.py      # 核心加速引擎（INT8-ConvRot / FP8 / BF16 + Spectrum + 共享编译）
 ├── chat_moss.py     # 终端交互式出图工具（支持 /mode /size /batch /bench 等指令）
-├── api_server.py    # OpenAI 兼容 FastAPI 远程接口服务（带 API Key 鉴权与并发锁）
+├── api_server.py    # Web UI + OpenAI 兼容 FastAPI 服务（单端口二合一，带密钥鉴权与并发锁）
+├── web/index.html   # 内置中文暗色响应式 Web 画图工作台（适配电脑/手机浏览器）
+├── gradio_ui.py     # 可选 Gradio WebUI（支持 share=True 免穿透公网链接）
 ├── compare_all.py   # 7 版本自动对比测速与 7 宫格拼图脚本
 ├── start.sh         # 一键启动交互式出图（自动检查依赖与下载模型）
-└── start_api.sh     # 一键启动远程 API 服务
+├── start_api.sh     # 一键启动内置 Web UI + OpenAI API 服务（推荐）
+└── start_gradio.sh  # 一键启动 Gradio WebUI（免穿透备选）
 ```
 
 ---
@@ -132,9 +135,16 @@ python /mnt/workspace/moss-image/compare_all.py
 
 ---
 
-## 5. 远程 API 部署与调用
+## 5. 远程 Web UI 与 API 部署调用
 
-### 第 1 步：启动 API 服务（终端 1）
+提供 **2 种远程使用方式**，均默认开启 **INT8-ConvRot + Spectrum（15.8s/张）** 加速并内置 GPU 并发锁：
+
+### 方式一（推荐）：内置 Web UI + OpenAI API 二合一（`start_api.sh`）
+无需安装 Gradio，启动后在**同一个 `8000` 端口**同时提供：
+- **中文响应式 Web 画图工作台**（访问 `https://你的公网域名/`，手机/电脑浏览器直接打开，支持一键防拼图词、画幅预设、种子锁定、会话历史画廊与原图下载，并由浏览器自动记住 API Key）；
+- **OpenAI 兼容接口**（`POST /v1/images/generations`）与 **直出 PNG 接口**（`POST /generate`）。
+
+#### 第 1 步：启动服务（终端 1）
 
 ```bash
 cd /mnt/workspace/moss-image
@@ -142,36 +152,50 @@ MOSS_API_KEY="换成你自己的密钥" MOSS_PORT=8000 bash start_api.sh
 ```
 
 环境变量说明：
-- `MOSS_API_KEY`：访问密钥（强烈建议自定义，客户端通过 `Authorization: Bearer <KEY>` 或 `x-api-key` 传递）；
+- `MOSS_API_KEY`：访问密钥（强烈建议自定义；在网页左上角输入框填一次即可自动保存，API 客户端通过 `Authorization: Bearer <KEY>` 或 `x-api-key` 传递）；
 - `MOSS_PRECISION`：可选 `int8`（默认）/ `bf16` / `fp8`；
 - `MOSS_PORT`：监听端口，默认 `8000`；
+- `MOSS_SAVE_OUTPUTS`：默认 `1`，自动同步保存生成图片到 `outputs/`；
 - `MOSS_MODEL_DIR`：自定义模型权重目录（默认为脚本同级 `MOSS-Image-SFT`）。
 
-服务内置 `threading.Lock()` 串行保护 GPU，多个外部请求并发到达时会自动排队，不会串状态或崩溃。
+#### 第 2 步：公网暴露端口（终端 2）
 
-### 第 2 步：公网暴露端口（终端 2）
+魔搭免费 Notebook 容器无独立公网 IP，新开一个终端窗口任选其一将 `8000` 端口映射到外网，拿到 `https://...` 地址后**直接在浏览器打开即可画图**：
 
-魔搭免费 Notebook 容器无独立公网 IP，新开一个终端窗口任选其一将 `8000` 端口映射到外网：
-
-- **方式 A：自有云服务器 SSH 反向隧道（国内直连最稳最快）**
+- **选项 A：自有云服务器 SSH 反向隧道（国内直连最稳最快）**
   ```bash
   ssh -N -R 0.0.0.0:8000:127.0.0.1:8000 root@你的服务器IP
   ```
   *(需在自有服务器 `/etc/ssh/sshd_config` 中开启 `GatewayPorts yes` 并放行 8000 端口。)*
 
-- **方式 B：`cpolar` / `ngrok` 内网穿透**
+- **选项 B：`cpolar` / `ngrok` 内网穿透**
   安装对应客户端并配置 token 后执行映射（如 `./ngrok http 8000` 或 `cpolar http 8000`）。
 
-- **方式 C：Cloudflare Quick Tunnel（免注册，需能连通 Cloudflare）**
+- **选项 C：Cloudflare Quick Tunnel（免注册，需能连通 Cloudflare）**
   ```bash
   curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o /mnt/workspace/cloudflared
   chmod +x /mnt/workspace/cloudflared
   /mnt/workspace/cloudflared tunnel --url http://127.0.0.1:8000
   ```
 
-### 第 3 步：客户端调用示例
+---
+
+### 方式二（免配穿透备选）：Gradio 一键公网链接（`start_gradio.sh`）
+如果你手头没有云服务器、也不想装 `cpolar`/`cloudflared`，可以直接用 Gradio 自带的 `share=True` 生成 72 小时免费公网网页链接（建议同时设置账号密码防白嫖）：
+
+```bash
+cd /mnt/workspace/moss-image
+MOSS_UI_AUTH="admin:换成你的密码" bash start_gradio.sh
+```
+
+启动完成后终端会打印 `Running on public URL: https://xxxxxx.gradio.live`，手机/电脑浏览器直接打开即可使用（同时支持 `gradio_client` 远程调用）。
+
+---
+
+### 第 3 步：程序化 API 调用示例（配合方式一）
 
 #### 接口一览
+- `GET /`：内置中文 Web 画图工作台
 - `GET /health`：健康检查（无需鉴权）
 - `POST /v1/images/generations`：OpenAI 兼容生图接口（返回 `b64_json`、种子和耗时）
 - `POST /generate`：直接返回 `image/png` 二进制图片流
