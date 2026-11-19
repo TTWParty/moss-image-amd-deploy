@@ -70,9 +70,9 @@
 
   .layout {
     display: grid;
-    grid-template-columns: 390px 1fr;
+    grid-template-columns: 400px 1fr;
     gap: 18px;
-    max-width: 1480px;
+    max-width: 1520px;
     margin: 0 auto;
     padding: 18px;
     min-height: calc(100vh - 58px);
@@ -141,8 +141,35 @@
     background: rgba(79, 140, 255, 0.18);
   }
 
+  /* Collapsible advanced settings */
+  details.adv-box {
+    background: rgba(31, 36, 48, 0.55);
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    padding: 9px 12px;
+  }
+  details.adv-box summary {
+    cursor: pointer;
+    font-size: 13px;
+    color: var(--muted);
+    user-select: none;
+    list-style: none;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  details.adv-box summary::-webkit-details-marker { display: none; }
+  details.adv-box[open] summary { color: var(--text); margin-bottom: 10px; }
+  .adv-hint {
+    font-size: 11.5px;
+    color: var(--muted);
+    margin-top: 5px;
+    line-height: 1.45;
+  }
+
+  .btn-row { display: flex; gap: 8px; }
   .btn-primary {
-    width: 100%;
+    flex: 1;
     padding: 12px;
     border: none;
     border-radius: 10px;
@@ -155,6 +182,20 @@
   }
   .btn-primary:hover:not(:disabled) { background: var(--accent-hover); }
   .btn-primary:disabled { opacity: 0.55; cursor: not-allowed; }
+
+  .btn-danger {
+    padding: 12px 16px;
+    border: 1px solid rgba(248, 113, 113, 0.5);
+    border-radius: 10px;
+    background: rgba(248, 113, 113, 0.16);
+    color: #fecaca;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    display: none;
+  }
+  .btn-danger:hover { background: rgba(248, 113, 113, 0.28); }
+  .btn-danger.show { display: inline-block; }
 
   .btn-sm {
     padding: 5px 10px;
@@ -170,6 +211,38 @@
     gap: 4px;
   }
   .btn-sm:hover { border-color: var(--accent); color: #fff; }
+  .btn-sm.del:hover { border-color: var(--red); color: #fecaca; }
+
+  /* Progress bar */
+  .progress-wrap {
+    display: none;
+    flex-direction: column;
+    gap: 6px;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    padding: 10px 12px;
+  }
+  .progress-wrap.show { display: flex; }
+  .progress-head {
+    display: flex;
+    justify-content: space-between;
+    font-size: 12.5px;
+    color: var(--text);
+  }
+  .progress-track {
+    width: 100%;
+    height: 8px;
+    background: #10131a;
+    border-radius: 999px;
+    overflow: hidden;
+  }
+  .progress-bar {
+    height: 100%;
+    width: 0%;
+    background: linear-gradient(90deg, #4f8cff, #34d399);
+    transition: width 0.25s ease;
+  }
 
   .stage {
     display: flex;
@@ -177,12 +250,11 @@
     gap: 16px;
   }
   .preview-box {
-    min-height: 420px;
+    min-height: 400px;
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    position: relative;
   }
   .placeholder {
     text-align: center;
@@ -230,17 +302,20 @@
     border-radius: 8px;
     font-size: 13px;
   }
+
   .history-title {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin: 0 0 10px 0;
+    margin: 0 0 12px 0;
     font-size: 14px;
     color: var(--muted);
+    flex-wrap: wrap;
+    gap: 8px;
   }
   .history-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(145px, 1fr));
     gap: 10px;
   }
   .hist-item {
@@ -252,20 +327,39 @@
     aspect-ratio: 1 / 1;
     background: #0a0c10;
   }
+  .hist-item:hover { border-color: var(--accent); }
   .hist-item img { width: 100%; height: 100%; object-fit: cover; display: block; }
-  .hist-item span {
+  .hist-del {
+    position: absolute;
+    top: 5px;
+    right: 5px;
+    width: 22px;
+    height: 22px;
+    border-radius: 6px;
+    border: none;
+    background: rgba(15, 17, 23, 0.78);
+    color: #f87171;
+    font-size: 13px;
+    line-height: 22px;
+    text-align: center;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 0.15s;
+  }
+  .hist-item:hover .hist-del { opacity: 1; }
+  .hist-label {
     position: absolute;
     bottom: 0; left: 0; right: 0;
-    background: rgba(0,0,0,0.68);
+    background: rgba(0, 0, 0, 0.72);
     font-size: 11px;
-    padding: 2px 5px;
+    padding: 3px 6px;
     color: #dbe4ff;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
   }
 
-  /* Lightbox */
+  /* Lightbox modal with metadata & actions */
   .modal {
     display: none;
     position: fixed;
@@ -277,7 +371,47 @@
     padding: 20px;
   }
   .modal.open { display: flex; }
-  .modal img { max-width: 96vw; max-height: 92vh; border-radius: 8px; }
+  .modal-card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    max-width: 96vw;
+    max-height: 94vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .modal-body {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #080a0f;
+    overflow: auto;
+    max-height: 76vh;
+  }
+  .modal-body img {
+    max-width: 92vw;
+    max-height: 75vh;
+    display: block;
+  }
+  .modal-foot {
+    padding: 12px 16px;
+    border-top: 1px solid var(--border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
+    font-size: 12.5px;
+    color: var(--muted);
+  }
+  .modal-prompt {
+    max-width: 680px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--text);
+  }
 </style>
 </head>
 <body>
@@ -300,7 +434,10 @@
         <span>访问密钥（API Key）</span>
         <span style="font-size:11px;">自动保存在本机浏览器</span>
       </label>
-      <input type="password" id="apiKey" placeholder="输入启动时设置的 MOSS_API_KEY" />
+      <div style="display:flex;gap:6px;">
+        <input type="password" id="apiKey" placeholder="输入启动时设置的 MOSS_API_KEY" />
+        <button class="btn-sm" type="button" id="loadGalleryAuthBtn" style="white-space:nowrap;">连接图库</button>
+      </div>
     </div>
 
     <div>
@@ -366,44 +503,121 @@
       <input type="number" id="seed" placeholder="留空表示每次随机生成" />
     </div>
 
+    <details class="adv-box">
+      <summary>
+        <span>高级参数（Shift / SLG 跳层引导）</span>
+        <span style="font-size:11px;">展开 ▾</span>
+      </summary>
+      <div class="row">
+        <div>
+          <label><span>Scheduler Shift</span></label>
+          <input type="number" id="shift" value="5.0" step="0.5" min="0.5" max="15.0" />
+        </div>
+        <div>
+          <label><span>SLG 跳层（逗号分隔）</span></label>
+          <input type="text" id="skipLayers" value="22" placeholder="如 22 或留空关闭" />
+        </div>
+      </div>
+      <div class="chips" id="slgPresets">
+        <button class="chip active" type="button" data-slg="22">默认 [22]</button>
+        <button class="chip" type="button" data-slg="24">层 24</button>
+        <button class="chip" type="button" data-slg="26">层 26</button>
+        <button class="chip" type="button" data-slg="">关闭 SLG（更写实）</button>
+      </div>
+      <div class="adv-hint">
+        官方推荐默认 Shift=5.0、跳层 22（22/24/26 均有助于稳定细节）；关闭 SLG 画面更偏真实但复杂构图偶尔易崩。
+      </div>
+    </details>
+
+    <div class="progress-wrap" id="progressWrap">
+      <div class="progress-head">
+        <span id="progressStage">准备中...</span>
+        <span id="progressPct">0%</span>
+      </div>
+      <div class="progress-track">
+        <div class="progress-bar" id="progressBar"></div>
+      </div>
+    </div>
+
     <div class="error-banner" id="errorBox"></div>
 
-    <button class="btn-primary" id="genBtn" type="button">开始生成（Ctrl / Cmd + Enter）</button>
+    <div class="btn-row">
+      <button class="btn-primary" id="genBtn" type="button">开始生成（Ctrl / Cmd + Enter）</button>
+      <button class="btn-danger" id="cancelBtn" type="button">取消</button>
+    </div>
   </section>
 
   <section class="stage">
     <div class="card preview-box" id="previewBox">
       <div class="placeholder" id="placeholder">
         输入提示词并点击「开始生成」<br />
-        <span style="font-size:12px;opacity:0.75;">人像建议用 3:4 竖图 + 一键防拼图词；中文字排版可用换行精确控制</span>
+        <span style="font-size:12px;opacity:0.75;">异步任务队列已开启：支持实时步数进度、随时取消，且绕过 Cloudflare 100 秒超时限制</span>
       </div>
       <div class="result-grid" id="resultGrid"></div>
     </div>
 
     <div class="card">
       <div class="history-title">
-        <span>本次会话历史记录（点击可回看与复用参数）</span>
-        <button class="btn-sm" type="button" id="clearHistBtn">清空记录</button>
+        <span id="galleryCount">服务器持久化图库（刷新不丢失，点击可放大与复用参数）</span>
+        <button class="btn-sm" type="button" id="refreshGalleryBtn">刷新图库</button>
       </div>
       <div class="history-grid" id="historyGrid"></div>
     </div>
   </section>
 </main>
 
-<div class="modal" id="lightbox" onclick="this.classList.remove('open')">
-  <img id="lightboxImg" src="" alt="preview" />
+<div class="modal" id="lightbox" onclick="if (event.target === this) closeModal()">
+  <div class="modal-card">
+    <div class="modal-body">
+      <img id="lightboxImg" src="" alt="preview" />
+    </div>
+    <div class="modal-foot">
+      <div>
+        <div class="modal-prompt" id="modalPrompt"></div>
+        <div id="modalMeta" style="margin-top:3px;"></div>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <button class="btn-sm" type="button" id="modalReuseBtn">回填全部参数</button>
+        <a class="btn-sm" id="modalDownloadBtn" download="moss.png">下载原图</a>
+        <button class="btn-sm del" type="button" id="modalDeleteBtn">删除</button>
+        <button class="btn-sm" type="button" onclick="closeModal()">关闭</button>
+      </div>
+    </div>
+  </div>
 </div>
 
 <script>
 const $ = (id) => document.getElementById(id);
 const STORAGE_KEY = "moss_ui_api_key";
-const historyItems = [];
-let timerId = null;
+let currentJobId = null;
+let pollTimer = null;
+let modalItem = null;
+let activeBlobUrl = null;
 
 $("apiKey").value = localStorage.getItem(STORAGE_KEY) || "";
 $("apiKey").addEventListener("input", (e) => {
   localStorage.setItem(STORAGE_KEY, e.target.value.trim());
 });
+
+function authHeaders(extra = {}) {
+  const h = { ...extra };
+  const key = $("apiKey").value.trim();
+  if (key) h["Authorization"] = `Bearer ${key}`;
+  return h;
+}
+
+function showError(msg) {
+  const box = $("errorBox");
+  if (!msg) { box.style.display = "none"; return; }
+  box.textContent = msg;
+  box.style.display = "block";
+}
+
+function parseSkipLayers(raw) {
+  const txt = (raw || "").trim();
+  if (!txt) return [];
+  return txt.split(/[,，\s]+/).filter(Boolean).map((v) => Number(v)).filter((n) => Number.isInteger(n) && n >= 0 && n < 42);
+}
 
 async function checkHealth() {
   try {
@@ -420,6 +634,9 @@ async function checkHealth() {
     }
     if (data.auth_required === false) {
       $("authBox").style.display = "none";
+      loadGallery();
+    } else if ($("apiKey").value.trim()) {
+      loadGallery();
     }
   } catch (err) {
     $("statusDot").className = "dot err";
@@ -436,6 +653,14 @@ $("sizePresets").addEventListener("click", (e) => {
   btn.classList.add("active");
 });
 
+$("slgPresets").addEventListener("click", (e) => {
+  const btn = e.target.closest(".chip");
+  if (!btn) return;
+  $("skipLayers").value = btn.dataset.slg;
+  document.querySelectorAll("#slgPresets .chip").forEach((c) => c.classList.remove("active"));
+  btn.classList.add("active");
+});
+
 $("antiCollageBtn").addEventListener("click", () => {
   $("negPrompt").value = "collage, grid, split screen, multi-panel, multiple views, diptych, triptych, photo strip, border, frame, worst quality, bad anatomy";
 });
@@ -448,33 +673,162 @@ $("demoPromptBtn").addEventListener("click", () => {
 });
 
 $("clearSeedBtn").addEventListener("click", () => { $("seed").value = ""; });
-$("clearHistBtn").addEventListener("click", () => {
-  historyItems.length = 0;
-  $("historyGrid").innerHTML = "";
+$("refreshGalleryBtn").addEventListener("click", () => loadGallery(true));
+$("loadGalleryAuthBtn").addEventListener("click", () => loadGallery(true));
+
+function applyParams(meta) {
+  if (!meta) return;
+  if (meta.prompt) $("prompt").value = meta.prompt;
+  if (meta.negative_prompt !== undefined) $("negPrompt").value = meta.negative_prompt;
+  if (meta.mode) $("mode").value = meta.mode;
+  if (meta.steps) $("steps").value = meta.steps;
+  if (meta.cfg) $("cfg").value = meta.cfg;
+  if (meta.shift) $("shift").value = meta.shift;
+  if (Array.isArray(meta.uncond_skip_layers)) $("skipLayers").value = meta.uncond_skip_layers.join(",");
+  if (meta.seed !== null && meta.seed !== undefined) $("seed").value = meta.seed;
+  if (meta.size && meta.size.includes("x")) {
+    const [w, h] = meta.size.split("x");
+    $("width").value = w;
+    $("height").value = h;
+  }
+}
+
+function closeModal() {
+  $("lightbox").classList.remove("open");
+  if (activeBlobUrl) {
+    URL.revokeObjectURL(activeBlobUrl);
+    activeBlobUrl = null;
+  }
+  modalItem = null;
+}
+
+async function openModal(meta, directDataUrl = null) {
+  modalItem = meta;
+  $("modalPrompt").textContent = meta.prompt || meta.filename || "";
+  const parts = [];
+  if (meta.mode) parts.push(meta.mode);
+  if (meta.size) parts.push(meta.size);
+  if (meta.elapsed_sec != null) parts.push(`${meta.elapsed_sec}s`);
+  if (meta.seed != null) parts.push(`seed=${meta.seed}`);
+  if (meta.cfg != null) parts.push(`CFG=${meta.cfg}`);
+  if (meta.shift != null) parts.push(`shift=${meta.shift}`);
+  $("modalMeta").textContent = parts.join(" · ");
+  $("modalDeleteBtn").style.display = meta.filename ? "inline-flex" : "none";
+  $("modalReuseBtn").style.display = meta.prompt ? "inline-flex" : "none";
+  $("modalDownloadBtn").download = meta.filename || `moss_s${meta.seed || 0}.png`;
+
+  if (directDataUrl) {
+    $("lightboxImg").src = directDataUrl;
+    $("modalDownloadBtn").href = directDataUrl;
+    $("lightbox").classList.add("open");
+    return;
+  }
+
+  // 先显示缩略图占位，后台拉取完整原图 PNG
+  if (meta.thumb_b64) {
+    $("lightboxImg").src = `data:image/jpeg;base64,${meta.thumb_b64}`;
+  }
+  $("lightbox").classList.add("open");
+
+  try {
+    const res = await fetch(`/api/outputs/${encodeURIComponent(meta.filename)}`, {
+      headers: authHeaders(),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const blob = await res.blob();
+    if (activeBlobUrl) URL.revokeObjectURL(activeBlobUrl);
+    activeBlobUrl = URL.createObjectURL(blob);
+    if (modalItem && modalItem.filename === meta.filename) {
+      $("lightboxImg").src = activeBlobUrl;
+      $("modalDownloadBtn").href = activeBlobUrl;
+    }
+  } catch (err) {
+    showError(`加载原图失败：${err.message}`);
+  }
+}
+
+$("modalReuseBtn").addEventListener("click", () => {
+  if (modalItem) applyParams(modalItem);
+  closeModal();
 });
 
-function showError(msg) {
-  const box = $("errorBox");
-  if (!msg) { box.style.display = "none"; return; }
-  box.textContent = msg;
-  box.style.display = "block";
+$("modalDeleteBtn").addEventListener("click", async () => {
+  if (!modalItem || !modalItem.filename) return;
+  await deleteOutput(modalItem.filename);
+  closeModal();
+});
+
+async function deleteOutput(filename) {
+  try {
+    const res = await fetch(`/api/outputs/${encodeURIComponent(filename)}`, {
+      method: "DELETE",
+      headers: authHeaders(),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    await loadGallery(false);
+  } catch (err) {
+    showError(`删除失败：${err.message}`);
+  }
+}
+
+async function loadGallery(showErr = false) {
+  try {
+    const res = await fetch("/api/gallery?limit=48", { headers: authHeaders() });
+    if (!res.ok) {
+      if (showErr) showError(res.status === 401 ? "API Key 错误，无法加载服务器图库" : `图库加载失败 (HTTP ${res.status})`);
+      return;
+    }
+    if (showErr) showError("");
+    const data = await res.json();
+    $("galleryCount").textContent = `服务器持久化图库（共 ${data.total} 张，显示最近 ${data.items.length} 张 · 刷新不丢）`;
+    const grid = $("historyGrid");
+    grid.innerHTML = "";
+    data.items.forEach((item) => {
+      const div = document.createElement("div");
+      div.className = "hist-item";
+      div.title = item.prompt || item.filename;
+
+      const img = document.createElement("img");
+      img.src = `data:image/jpeg;base64,${item.thumb_b64}`;
+
+      const del = document.createElement("button");
+      del.className = "hist-del";
+      del.type = "button";
+      del.title = "删除";
+      del.textContent = "×";
+      del.onclick = (ev) => {
+        ev.stopPropagation();
+        deleteOutput(item.filename);
+      };
+
+      const label = document.createElement("span");
+      label.className = "hist-label";
+      label.textContent = item.elapsed_sec != null
+        ? `${item.elapsed_sec}s · ${item.mode} · s${item.seed}`
+        : item.filename;
+
+      div.append(img, del, label);
+      div.onclick = () => openModal(item);
+      grid.append(div);
+    });
+  } catch (err) {
+    if (showErr) showError(`图库请求失败：${err.message}`);
+  }
 }
 
 function renderResults(items, reqMeta) {
   $("placeholder").style.display = "none";
   const grid = $("resultGrid");
   grid.innerHTML = "";
-  items.forEach((item, idx) => {
+  items.forEach((item) => {
     const src = `data:image/png;base64,${item.b64_json}`;
+    const fullMeta = { ...reqMeta, ...item };
     const card = document.createElement("div");
     card.className = "img-card";
 
     const img = document.createElement("img");
     img.src = src;
-    img.onclick = () => {
-      $("lightboxImg").src = src;
-      $("lightbox").classList.add("open");
-    };
+    img.onclick = () => openModal(fullMeta, src);
 
     const meta = document.createElement("div");
     meta.className = "img-meta";
@@ -494,46 +848,79 @@ function renderResults(items, reqMeta) {
     const dl = document.createElement("a");
     dl.className = "btn-sm";
     dl.href = src;
-    dl.download = `moss_${reqMeta.mode}_${reqMeta.size}_s${item.seed}.png`;
+    dl.download = item.filename || `moss_${reqMeta.mode}_${reqMeta.size}_s${item.seed}.png`;
     dl.textContent = "下载原图";
 
     actions.append(reuseBtn, dl);
     meta.append(info, actions);
     card.append(img, meta);
     grid.append(card);
-
-    historyItems.unshift({ src, item, reqMeta });
   });
-  renderHistory();
 }
 
-function renderHistory() {
-  const hGrid = $("historyGrid");
-  hGrid.innerHTML = "";
-  historyItems.slice(0, 24).forEach((entry) => {
-    const div = document.createElement("div");
-    div.className = "hist-item";
-    div.title = entry.reqMeta.prompt;
-    const img = document.createElement("img");
-    img.src = entry.src;
-    const label = document.createElement("span");
-    label.textContent = `${entry.item.elapsed_sec}s · s${entry.item.seed}`;
-    div.append(img, label);
-    div.onclick = () => {
-      $("prompt").value = entry.reqMeta.prompt;
-      $("negPrompt").value = entry.reqMeta.negative_prompt;
-      $("mode").value = entry.reqMeta.mode;
-      $("cfg").value = entry.reqMeta.cfg;
-      $("steps").value = entry.reqMeta.steps;
-      $("seed").value = entry.item.seed;
-      const [w, h] = entry.reqMeta.size.split("x");
-      $("width").value = w;
-      $("height").value = h;
-      $("lightboxImg").src = entry.src;
-      $("lightbox").classList.add("open");
-    };
-    hGrid.append(div);
-  });
+function setRunningUI(running) {
+  $("genBtn").disabled = running;
+  $("genBtn").textContent = running ? "生成中..." : "开始生成（Ctrl / Cmd + Enter）";
+  $("cancelBtn").classList.toggle("show", running);
+  $("progressWrap").classList.toggle("show", running);
+  if (!running) {
+    $("progressBar").style.width = "0%";
+    currentJobId = null;
+    if (pollTimer) {
+      clearTimeout(pollTimer);
+      pollTimer = null;
+    }
+  }
+}
+
+function updateProgressView(job) {
+  const stageMap = {
+    queued: "排队等待 GPU...",
+    encoding: "正在编码提示词 (Qwen3.5-9B)...",
+    denoising: `正在生成（图 ${job.image_index}/${job.total_images} · 第 ${job.step}/${job.total_steps} 步）`,
+    decoding: `正在高清解码 VAE（图 ${job.image_index}/${job.total_images}）...`,
+  };
+  let pct = 5;
+  if (job.stage === "encoding") pct = 10;
+  else if (job.stage === "denoising" || job.stage === "decoding") {
+    const imgBase = Math.max(0, (job.image_index - 1) / Math.max(1, job.total_images));
+    const stepFrac = job.stage === "decoding" ? 0.96 : (job.step / Math.max(1, job.total_steps)) * 0.9;
+    pct = Math.min(99, Math.round((imgBase + stepFrac / Math.max(1, job.total_images)) * 100));
+  }
+  $("progressStage").textContent = `${stageMap[job.stage] || job.stage} · ${job.elapsed_sec || 0}s`;
+  $("progressPct").textContent = `${pct}%`;
+  $("progressBar").style.width = `${pct}%`;
+}
+
+async function pollJob(jobId, payload) {
+  try {
+    const res = await fetch(`/api/jobs/${jobId}`, { headers: authHeaders() });
+    if (!res.ok) throw new Error(`查询进度失败 (HTTP ${res.status})`);
+    const job = await res.json();
+    updateProgressView(job);
+
+    if (job.status === "done") {
+      $("progressBar").style.width = "100%";
+      renderResults(job.data || [], payload);
+      setRunningUI(false);
+      loadGallery(false);
+      return;
+    }
+    if (job.status === "cancelled") {
+      showError("已取消本次生成任务");
+      setRunningUI(false);
+      return;
+    }
+    if (job.status === "error") {
+      showError(`生成出错：${job.error || "未知错误"}`);
+      setRunningUI(false);
+      return;
+    }
+    pollTimer = setTimeout(() => pollJob(jobId, payload), 400);
+  } catch (err) {
+    showError(err.message || "轮询进度失败");
+    setRunningUI(false);
+  }
 }
 
 async function generate() {
@@ -554,52 +941,56 @@ async function generate() {
     size: `${w}x${h}`,
     steps: Number($("steps").value || 50),
     cfg: Number($("cfg").value || 3.0),
+    shift: Number($("shift").value || 5.0),
+    uncond_skip_layers: parseSkipLayers($("skipLayers").value),
     n: Number($("batchN").value || 1),
     seed: seedRaw === "" ? null : Number(seedRaw),
   };
 
-  const btn = $("genBtn");
-  btn.disabled = true;
-  const tStart = Date.now();
-  btn.textContent = "正在生成中... 0.0s";
-  timerId = setInterval(() => {
-    btn.textContent = `正在生成中... ${((Date.now() - tStart) / 1000).toFixed(1)}s`;
-  }, 100);
+  setRunningUI(true);
+  $("progressStage").textContent = "提交任务中...";
+  $("progressPct").textContent = "0%";
 
   try {
-    const headers = { "Content-Type": "application/json" };
-    const key = $("apiKey").value.trim();
-    if (key) headers["Authorization"] = `Bearer ${key}`;
-
-    const res = await fetch("/v1/images/generations", {
+    const res = await fetch("/api/jobs", {
       method: "POST",
-      headers,
+      headers: authHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify(payload),
     });
     if (!res.ok) {
-      let msg = `请求失败 (HTTP ${res.status})`;
+      let msg = `提交失败 (HTTP ${res.status})`;
       try {
         const j = await res.json();
         if (j.detail) msg += `：${j.detail}`;
       } catch {}
       throw new Error(msg);
     }
-    const data = await res.json();
-    renderResults(data.data || [], payload);
+    const { job_id } = await res.json();
+    currentJobId = job_id;
+    pollJob(job_id, payload);
   } catch (err) {
-    showError(err.message || "生成失败，请检查网络连接与 API Key");
-  } finally {
-    clearInterval(timerId);
-    btn.disabled = false;
-    btn.textContent = "开始生成（Ctrl / Cmd + Enter）";
+    showError(err.message || "提交任务失败，请检查网络连接与 API Key");
+    setRunningUI(false);
   }
 }
+
+$("cancelBtn").addEventListener("click", async () => {
+  if (!currentJobId) return;
+  $("progressStage").textContent = "正在取消（当前步完成后立即停止）...";
+  try {
+    await fetch(`/api/jobs/${currentJobId}/cancel`, {
+      method: "POST",
+      headers: authHeaders(),
+    });
+  } catch {}
+});
 
 $("genBtn").addEventListener("click", generate);
 document.addEventListener("keydown", (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key === "Enter" && !$("genBtn").disabled) {
     generate();
   }
+  if (e.key === "Escape") closeModal();
 });
 
 checkHealth();
