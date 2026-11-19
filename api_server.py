@@ -17,10 +17,20 @@ from fastapi import FastAPI, Header, HTTPException, Response
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
-from opt_moss import SPECTRUM_PRESETS, begin_generation, optimize_pipeline, spectrum_stats
+from opt_moss import (
+    SPECTRUM_PRESETS,
+    begin_generation,
+    load_lora_weights,
+    optimize_pipeline,
+    optimize_transformer,
+    spectrum_stats,
+)
 
 BASE_DIR = Path(__file__).resolve().parent
 MODEL_DIR = os.environ.get("MOSS_MODEL_DIR", str(BASE_DIR / "MOSS-Image-SFT"))
+MODEL_ROOT = Path(MODEL_DIR).resolve().parent
+EXTRA_MODELS_DIR = Path(os.environ.get("MOSS_EXTRA_MODELS_DIR", str(MODEL_ROOT / "extra_models")))
+LORA_DIR = Path(os.environ.get("MOSS_LORA_DIR", str(MODEL_ROOT / "loras")))
 OUT_DIR = Path(os.environ.get("MOSS_OUT_DIR", str(BASE_DIR / "outputs")))
 THUMB_DIR = OUT_DIR / ".thumbs"
 WEB_INDEX = BASE_DIR / "web" / "index.html"
@@ -30,6 +40,8 @@ SAVE_OUTPUTS = os.environ.get("MOSS_SAVE_OUTPUTS", "1") != "0"
 
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 THUMB_DIR.mkdir(parents=True, exist_ok=True)
+EXTRA_MODELS_DIR.mkdir(parents=True, exist_ok=True)
+LORA_DIR.mkdir(parents=True, exist_ok=True)
 
 app = FastAPI(title="MOSS-Image Web UI & OpenAI-Compatible API")
 GEN_LOCK = threading.Lock()
@@ -37,6 +49,80 @@ JOBS_LOCK = threading.Lock()
 JOBS: dict[str, dict] = {}
 neg_cache = {}
 pipe = None
+PRIMARY_TR = None
+TRANSFORMERS: dict[str, torch.nn.Module] = {}
+LORAS: dict[str, list] = {}
+LORA_WARMED_UP = False
+
+BASE_MODEL_META = {
+    "moss-image-sft": {
+        "label": "MOSS-Image-SFT（官方 · 中文排版最强）",
+        "short": "SFT",
+    },
+    "kromoss": {
+        "label": "Kromoss（70万图全量重训 · 画质/对比度更强）",
+        "short": "Kromoss",
+    },
+    "mossyume": {
+        "label": "MossYume（2000万图重训 · 二次元+写实）",
+        "short": "MossYume",
+    },
+    "moss-image-heal": {
+        "label": "MOSS-Image-heal（数值修复版基座）",
+        "short": "Heal",
+    },
+}
+
+LORA_META = {
+    "kromoss-8step-dmd2": {
+        "label": "Kromoss 8步 DMD2-GAN（画质最强 · 推荐）",
+        "short": "8步DMD2",
+        "rec_steps": 8,
+        "rec_cfg": 1.0,
+        "rec_mode": "exact",
+        "rec_base": "kromoss",
+    },
+    "8-steps-dmd2-lora": {
+        "label": "Kromoss 8步 DMD2-GAN（画质最强 · 推荐）",
+        "short": "8步DMD2",
+        "rec_steps": 8,
+        "rec_cfg": 1.0,
+        "rec_mode": "exact",
+        "rec_base": "kromoss",
+    },
+    "kromoss-8step-dmd": {
+        "label": "Kromoss 8步 DMD",
+        "short": "8步DMD",
+        "rec_steps": 8,
+        "rec_cfg": 1.0,
+        "rec_mode": "exact",
+        "rec_base": "kromoss",
+    },
+    "sft-4step": {
+        "label": "SFT 4步 Turbo（akhaliq · 极速+双语招牌）",
+        "short": "4步Turbo",
+        "rec_steps": 4,
+        "rec_cfg": 1.0,
+        "rec_mode": "exact",
+        "rec_base": "moss-image-sft",
+    },
+    "sft-8step": {
+        "label": "SFT 8步 DMD（lodestones · 均衡快）",
+        "short": "8步DMD",
+        "rec_steps": 8,
+        "rec_cfg": 1.0,
+        "rec_mode": "exact",
+        "rec_base": "moss-image-sft",
+    },
+    "deband": {
+        "label": "DeBand 去竖向色带 LoRA",
+        "short": "DeBand",
+        "rec_steps": 50,
+        "rec_cfg": 3.0,
+        "rec_mode": "spectrum",
+        "rec_base": "moss-image-sft",
+    },
+}
 
 
 class _JobCancelled(Exception):
@@ -103,9 +189,221 @@ def _get_neg_embeds(neg_text: str):
     return neg_cache[neg_text]
 
 
+def _is_complete_transformer_dir(tr_dir: Path) -> bool:
+    if not (tr_dir / "config.json").is_file():
+        return False
+    idx_file = tr_dir / "diffusion_pytorch_model.safetensors.index.json"
+    if idx_file.is_file():
+        try:
+            wm = json.loads(idx_file.read_text(encoding="utf-8")).get("weight_map", {})
+            shards = set(wm.values())
+            return bool(shards) and all((tr_dir / s).is_file() and (tr_dir / s).stat().st_size > 1024 for s in shards)
+        except Exception:
+            return False
+    single = tr_dir / "diffusion_pytorch_model.safetensors"
+    return single.is_file() and single.stat().st_size > 1024
+
+
+def _warmup_lora_if_needed():
+    global LORA_WARMED_UP
+    if LORA_WARMED_UP or not LORAS or pipe is None:
+        return
+    first_lora_id = next(iter(LORAS))
+    print(f"预热 FP32 Turbo LoRA 编译核 ({first_lora_id})...")
+    prev_tr = pipe.transformer
+    try:
+        pipe.transformer = PRIMARY_TR
+        begin_generation(pipe, mode="exact", total_steps=1, lora_layers=LORAS[first_lora_id], lora_strength=1.0)
+        _ = pipe(
+            "warmup",
+            height=1024,
+            width=1024,
+            num_inference_steps=1,
+            guidance_scale=1.0,
+            uncond_skip_layers=[],
+            generator=torch.Generator("cpu").manual_seed(0),
+        )
+        torch.cuda.synchronize()
+        LORA_WARMED_UP = True
+    finally:
+        pipe.transformer = prev_tr
+
+
+def _scan_and_load_extras() -> dict:
+    """Discover and load any newly added base transformers in EXTRA_MODELS_DIR and LoRAs in LORA_DIR."""
+    added_models = []
+    added_loras = []
+    tr_cls = type(PRIMARY_TR)
+    num_layers = len(PRIMARY_TR.layers)
+    dim = int(PRIMARY_TR.config.dim)
+    ffn_dim = int(PRIMARY_TR.config.ffn_dim)
+
+    if EXTRA_MODELS_DIR.is_dir():
+        for entry in sorted(EXTRA_MODELS_DIR.iterdir()):
+            if not entry.is_dir():
+                continue
+            model_id = entry.name.lower()
+            if model_id in TRANSFORMERS:
+                continue
+            tr_dir = entry / "transformer" if (entry / "transformer" / "config.json").is_file() else entry
+            if not _is_complete_transformer_dir(tr_dir):
+                print(f"[跳过] 底模目录 {entry.name} 权重不完整，等待下载完成后可点「扫描新模型」")
+                continue
+            try:
+                t0 = time.perf_counter()
+                print(f"加载扩展底模 [{model_id}] ({tr_dir})...")
+                tr = tr_cls.from_pretrained(str(tr_dir), torch_dtype=torch.bfloat16, local_files_only=True)
+                tr.to("cuda").eval()
+                optimize_transformer(
+                    tr,
+                    precision=PRECISION,
+                    use_compile=False,
+                    shared_block_fns=PRIMARY_TR._shared_block_fns,
+                    shared_lora_block_fns=PRIMARY_TR._shared_lora_block_fns,
+                    h64=PRIMARY_TR._h64,
+                )
+                TRANSFORMERS[model_id] = tr
+                added_models.append(model_id)
+                print(f"扩展底模 [{model_id}] 已就绪（{time.perf_counter() - t0:.1f}s）")
+            except Exception as e:
+                print(f"[警告] 加载扩展底模 {model_id} 失败: {e}")
+
+    if LORA_DIR.is_dir():
+        for fp in sorted(LORA_DIR.glob("*.safetensors")):
+            lora_id = fp.stem.lower()
+            if lora_id in LORAS or lora_id == "none":
+                continue
+            if fp.stat().st_size < 1024 * 1024:
+                print(f"[跳过] LoRA 文件 {fp.name} 体积过小（可能未下载完）")
+                continue
+            try:
+                t0 = time.perf_counter()
+                print(f"加载 FP32 LoRA [{lora_id}] ({fp.name})...")
+                LORAS[lora_id] = load_lora_weights(
+                    fp, num_layers=num_layers, dim=dim, ffn_dim=ffn_dim, device="cuda"
+                )
+                added_loras.append(lora_id)
+                print(f"LoRA [{lora_id}] 已驻留显存（{time.perf_counter() - t0:.1f}s）")
+            except Exception as e:
+                print(f"[警告] 加载 LoRA {fp.name} 失败: {e}")
+
+    if added_loras:
+        _warmup_lora_if_needed()
+
+    return {"added_models": added_models, "added_loras": added_loras}
+
+
+def _build_catalog() -> dict:
+    models = []
+    for mid in TRANSFORMERS:
+        info = BASE_MODEL_META.get(mid, {"label": mid, "short": mid})
+        models.append({"id": mid, "label": info["label"], "short": info["short"], "loaded": True})
+
+    loras = [{
+        "id": "none",
+        "label": "不使用 LoRA（50 步精修）",
+        "short": "无LoRA",
+        "loaded": True,
+        "rec_steps": 50,
+        "rec_cfg": 3.0,
+        "rec_mode": "spectrum",
+        "rec_base": None,
+    }]
+    for lid in LORAS:
+        info = LORA_META.get(lid, {
+            "label": f"{lid}（自定义 LoRA）",
+            "short": lid,
+            "rec_steps": 8,
+            "rec_cfg": 1.0,
+            "rec_mode": "exact",
+            "rec_base": None,
+        })
+        loras.append({"id": lid, "loaded": True, **info})
+
+    # Find matching Kromoss 8-step DMD2 LoRA id (supports both canonical and upstream filename)
+    kromoss_dmd2_id = "kromoss-8step-dmd2" if "kromoss-8step-dmd2" in LORAS else (
+        "8-steps-dmd2-lora" if "8-steps-dmd2-lora" in LORAS else "kromoss-8step-dmd2"
+    )
+
+    presets = [
+        {
+            "id": "kromoss-8step",
+            "label": "⚡ Kromoss 8步（画质最强 · 推荐）",
+            "model": "kromoss",
+            "lora": kromoss_dmd2_id,
+            "lora_strength": 1.0,
+            "mode": "exact",
+            "steps": 8,
+            "cfg": 1.0,
+            "shift": 5.0,
+            "uncond_skip_layers": [],
+            "available": ("kromoss" in TRANSFORMERS) and (kromoss_dmd2_id in LORAS),
+        },
+        {
+            "id": "sft-4step",
+            "label": "⚡ SFT 4步（极速 · 双语文字强）",
+            "model": "moss-image-sft",
+            "lora": "sft-4step",
+            "lora_strength": 1.0,
+            "mode": "exact",
+            "steps": 4,
+            "cfg": 1.0,
+            "shift": 5.0,
+            "uncond_skip_layers": [],
+            "available": ("moss-image-sft" in TRANSFORMERS) and ("sft-4step" in LORAS),
+        },
+        {
+            "id": "sft-8step",
+            "label": "⚡ SFT 8步（均衡快 · 中文稳）",
+            "model": "moss-image-sft",
+            "lora": "sft-8step",
+            "lora_strength": 1.0,
+            "mode": "exact",
+            "steps": 8,
+            "cfg": 1.0,
+            "shift": 5.0,
+            "uncond_skip_layers": [],
+            "available": ("moss-image-sft" in TRANSFORMERS) and ("sft-8step" in LORAS),
+        },
+        {
+            "id": "kromoss-50step",
+            "label": "🎨 Kromoss 50步（极致写实精修）",
+            "model": "kromoss",
+            "lora": "none",
+            "lora_strength": 1.0,
+            "mode": "spectrum",
+            "steps": 50,
+            "cfg": 3.0,
+            "shift": 5.0,
+            "uncond_skip_layers": [22],
+            "available": "kromoss" in TRANSFORMERS,
+        },
+        {
+            "id": "sft-50step",
+            "label": "🎨 SFT 50步（密集中文海报精修）",
+            "model": "moss-image-sft",
+            "lora": "none",
+            "lora_strength": 1.0,
+            "mode": "spectrum",
+            "steps": 50,
+            "cfg": 3.0,
+            "shift": 5.0,
+            "uncond_skip_layers": [22],
+            "available": "moss-image-sft" in TRANSFORMERS,
+        },
+    ]
+    return {
+        "models": models,
+        "loras": loras,
+        "presets": presets,
+        "extra_models_dir": str(EXTRA_MODELS_DIR),
+        "lora_dir": str(LORA_DIR),
+    }
+
+
 @app.on_event("startup")
 def _startup():
-    global pipe
+    global pipe, PRIMARY_TR
     print(f"加载 MOSS-Image-SFT [precision={PRECISION}]...")
     pipe = DiffusionPipeline.from_pretrained(
         MODEL_DIR,
@@ -117,7 +415,10 @@ def _startup():
     pipe.scheduler = type(pipe.scheduler).from_config(pipe.scheduler.config, shift=5.0)
     pipe.to("cuda")
     optimize_pipeline(pipe, precision=PRECISION, use_compile=True)
+    PRIMARY_TR = pipe.transformer
+    TRANSFORMERS["moss-image-sft"] = PRIMARY_TR
 
+    # 预热无 LoRA 主编译核
     neg_e, neg_m = _get_neg_embeds("")
     begin_generation(pipe, mode="exact", total_steps=2)
     _ = pipe(
@@ -126,12 +427,17 @@ def _startup():
         uncond_skip_layers=[22], generator=torch.Generator("cpu").manual_seed(0),
     )
     torch.cuda.synchronize()
-    print("MOSS-Image Web UI & API 已就绪！")
+
+    # 自动扫描并常驻加载 extra_models/ (如 Kromoss) 和 loras/ (4步/8步 Turbo LoRA)
+    _scan_and_load_extras()
+    print(f"MOSS-Image Web UI & API 已就绪！已加载底模: {list(TRANSFORMERS.keys())}，LoRA: {list(LORAS.keys())}")
 
 
 class ImageRequest(BaseModel):
     prompt: str
     model: str = "moss-image-sft"
+    lora: Optional[str] = "none"
+    lora_strength: float = Field(default=1.0, ge=0.0, le=2.0)
     n: int = Field(default=1, ge=1, le=4)
     size: str = "1024x1024"
     response_format: str = "b64_json"
@@ -144,9 +450,36 @@ class ImageRequest(BaseModel):
     negative_prompt: str = ""
 
 
+def _resolve_model_and_lora(req: ImageRequest):
+    model_id = (req.model or "moss-image-sft").strip().lower()
+    if model_id not in TRANSFORMERS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"未知或未加载的底模 '{model_id}'，当前可用: {list(TRANSFORMERS.keys())}",
+        )
+    lora_id = (req.lora or "none").strip().lower()
+    if lora_id in ("", "none", "null"):
+        lora_id = "none"
+        lora_layers = None
+    else:
+        if lora_id not in LORAS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"未知或未加载的 LoRA '{lora_id}'，当前可用: {list(LORAS.keys())}",
+            )
+        lora_layers = LORAS[lora_id]
+    return model_id, lora_id, lora_layers
+
+
 def _save_output(png_bytes: bytes, img: Image.Image, meta: dict) -> str:
     ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:18]
-    fname = f"{ts}_{PRECISION}_{meta['mode']}_{meta['size']}_s{meta['seed']}.png"
+    tag = meta.get("model", "sft")
+    if meta.get("lora") and meta["lora"] != "none":
+        tag = f"{tag}_{meta['lora']}"
+    else:
+        tag = f"{tag}_{meta['mode']}"
+    safe_tag = "".join(c if (c.isalnum() or c in "-_") else "_" for c in tag)[:40]
+    fname = f"{ts}_{PRECISION}_{safe_tag}_{meta['size']}_s{meta['seed']}.png"
     png_path = OUT_DIR / fname
     png_path.write_bytes(png_bytes)
 
@@ -166,6 +499,7 @@ def _save_output(png_bytes: bytes, img: Image.Image, meta: dict) -> str:
 def _run_generate(req: ImageRequest, job: Optional[dict] = None):
     if req.mode not in SPECTRUM_PRESETS:
         raise HTTPException(status_code=400, detail="mode 仅支持 spectrum / turbo / exact")
+    model_id, lora_id, lora_layers = _resolve_model_and_lora(req)
     w, h = _parse_size(req.size)
     skip_layers = _validate_skip_layers(req.uncond_skip_layers)
     cancel_evt: Optional[threading.Event] = job["cancel_event"] if job else None
@@ -181,8 +515,17 @@ def _run_generate(req: ImageRequest, job: Optional[dict] = None):
             raise _JobCancelled()
 
         _update_job(status="running", stage="encoding", step=0, total_steps=req.steps, started_at=time.perf_counter())
+        pipe.transformer = TRANSFORMERS[model_id]
         pipe.scheduler = type(pipe.scheduler).from_config(pipe.scheduler.config, shift=float(req.shift))
-        neg_e, neg_m = _get_neg_embeds(req.negative_prompt)
+
+        use_cfg = abs(float(req.cfg) - 1.0) > 1e-6
+        if use_cfg:
+            neg_e, neg_m = _get_neg_embeds(req.negative_prompt)
+            effective_skip = skip_layers
+        else:
+            neg_e, neg_m = None, None
+            effective_skip = []
+
         pos_e, pos_m = pipe.encode_prompt(req.prompt)
 
         for i in range(req.n):
@@ -191,7 +534,13 @@ def _run_generate(req: ImageRequest, job: Optional[dict] = None):
 
             seed = (req.seed + i) if req.seed is not None else random.randint(0, 2**32 - 1)
             t0 = time.perf_counter()
-            begin_generation(pipe, mode=req.mode, total_steps=req.steps)
+            begin_generation(
+                pipe,
+                mode=req.mode,
+                total_steps=req.steps,
+                lora_layers=lora_layers,
+                lora_strength=req.lora_strength,
+            )
             _update_job(stage="denoising", image_index=i + 1, total_images=req.n, step=0, total_steps=req.steps)
 
             orig_pb = pipe.progress_bar
@@ -218,8 +567,8 @@ def _run_generate(req: ImageRequest, job: Optional[dict] = None):
                     height=h,
                     width=w,
                     num_inference_steps=req.steps,
-                    guidance_scale=req.cfg,
-                    uncond_skip_layers=skip_layers,
+                    guidance_scale=float(req.cfg) if use_cfg else 1.0,
+                    uncond_skip_layers=effective_skip,
                     generator=torch.Generator("cpu").manual_seed(seed),
                 ).images[0]
             finally:
@@ -240,12 +589,15 @@ def _run_generate(req: ImageRequest, job: Optional[dict] = None):
                     {
                         "prompt": req.prompt,
                         "negative_prompt": req.negative_prompt,
+                        "model": model_id,
+                        "lora": lora_id,
+                        "lora_strength": float(req.lora_strength),
                         "mode": req.mode,
                         "size": f"{w}x{h}",
                         "steps": req.steps,
                         "cfg": req.cfg,
                         "shift": req.shift,
-                        "uncond_skip_layers": skip_layers,
+                        "uncond_skip_layers": effective_skip,
                         "seed": seed,
                         "elapsed_sec": round(dt, 2),
                         "stats": stats,
@@ -321,7 +673,27 @@ def health():
         "precision": PRECISION,
         "ready": pipe is not None,
         "auth_required": bool(API_KEY),
+        "models": list(TRANSFORMERS.keys()),
+        "loras": list(LORAS.keys()),
     }
+
+
+@app.get("/api/models")
+def get_models():
+    return _build_catalog()
+
+
+@app.post("/api/models/reload")
+def reload_models(
+    authorization: Optional[str] = Header(default=None),
+    x_api_key: Optional[str] = Header(default=None),
+):
+    _check_auth(authorization, x_api_key)
+    if pipe is None:
+        raise HTTPException(status_code=503, detail="服务仍在初始化中")
+    with GEN_LOCK:
+        added = _scan_and_load_extras()
+    return {**added, **_build_catalog()}
 
 
 @app.post("/api/jobs")
@@ -333,6 +705,7 @@ def create_job(
     _check_auth(authorization, x_api_key)
     if req.mode not in SPECTRUM_PRESETS:
         raise HTTPException(status_code=400, detail="mode 仅支持 spectrum / turbo / exact")
+    _resolve_model_and_lora(req)
     _parse_size(req.size)
     _validate_skip_layers(req.uncond_skip_layers)
 
@@ -434,6 +807,9 @@ def list_gallery(
             "created_at": meta.get("created_at", p.stat().st_mtime),
             "prompt": meta.get("prompt", ""),
             "negative_prompt": meta.get("negative_prompt", ""),
+            "model": meta.get("model", "moss-image-sft"),
+            "lora": meta.get("lora", "none"),
+            "lora_strength": meta.get("lora_strength", 1.0),
             "mode": meta.get("mode", "spectrum"),
             "size": meta.get("size", ""),
             "steps": meta.get("steps", 50),

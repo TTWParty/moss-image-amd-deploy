@@ -15,6 +15,7 @@
     --accent: #4f8cff;
     --accent-hover: #3b78f0;
     --green: #34d399;
+    --amber: #fbbf24;
     --red: #f87171;
     --radius: 12px;
   }
@@ -70,14 +71,14 @@
 
   .layout {
     display: grid;
-    grid-template-columns: 400px 1fr;
+    grid-template-columns: 420px 1fr;
     gap: 18px;
-    max-width: 1520px;
+    max-width: 1540px;
     margin: 0 auto;
     padding: 18px;
     min-height: calc(100vh - 58px);
   }
-  @media (max-width: 920px) {
+  @media (max-width: 940px) {
     .layout { grid-template-columns: 1fr; padding: 12px; }
   }
 
@@ -92,6 +93,15 @@
     flex-direction: column;
     gap: 13px;
     height: fit-content;
+  }
+  .model-box {
+    background: rgba(31, 36, 48, 0.55);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 11px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 9px;
   }
   label {
     display: flex;
@@ -114,16 +124,18 @@
     transition: border-color 0.15s;
   }
   textarea:focus, input:focus, select:focus { border-color: var(--accent); }
+  input:disabled, select:disabled { opacity: 0.45; cursor: not-allowed; }
   textarea { resize: vertical; }
 
   .row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
   .row-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+  .row-lora { display: grid; grid-template-columns: 1fr 84px; gap: 8px; }
 
   .chips {
     display: flex;
     flex-wrap: wrap;
     gap: 6px;
-    margin-top: 6px;
+    margin-top: 4px;
   }
   .chip {
     background: var(--panel-2);
@@ -135,10 +147,20 @@
     cursor: pointer;
     transition: all 0.15s;
   }
-  .chip:hover, .chip.active {
+  .chip:hover:not(:disabled), .chip.active {
     color: #fff;
     border-color: var(--accent);
     background: rgba(79, 140, 255, 0.18);
+  }
+  .chip.turbo.active {
+    border-color: var(--green);
+    background: rgba(52, 211, 153, 0.18);
+    color: #d1fae5;
+  }
+  .chip:disabled {
+    opacity: 0.38;
+    cursor: not-allowed;
+    text-decoration: line-through;
   }
 
   /* Collapsible advanced settings */
@@ -163,9 +185,10 @@
   .adv-hint {
     font-size: 11.5px;
     color: var(--muted);
-    margin-top: 5px;
+    margin-top: 4px;
     line-height: 1.45;
   }
+  .adv-hint.ok { color: #6ee7b7; }
 
   .btn-row { display: flex; gap: 8px; }
   .btn-primary {
@@ -350,7 +373,7 @@
   .hist-label {
     position: absolute;
     bottom: 0; left: 0; right: 0;
-    background: rgba(0, 0, 0, 0.72);
+    background: rgba(0, 0, 0, 0.74);
     font-size: 11px;
     padding: 3px 6px;
     color: #dbe4ff;
@@ -440,40 +463,72 @@
       </div>
     </div>
 
+    <div class="model-box">
+      <label style="margin-bottom:0;">
+        <span style="color:var(--text);font-weight:600;">模型与 Turbo 加速方案（零重启秒切）</span>
+        <button class="chip" type="button" id="reloadModelsBtn" title="重新扫描 extra_models/ 和 loras/ 目录">扫描新模型</button>
+      </label>
+      <div class="chips" id="presetChips"></div>
+
+      <div>
+        <label><span>底模（Base Transformer）</span></label>
+        <select id="baseModel">
+          <option value="moss-image-sft">MOSS-Image-SFT（官方 · 中文排版最强）</option>
+        </select>
+      </div>
+
+      <div class="row-lora">
+        <div>
+          <label><span>加速 / 风格 LoRA（FP32 未合并旁路）</span></label>
+          <select id="loraSelect">
+            <option value="none">不使用 LoRA（50 步精修）</option>
+          </select>
+        </div>
+        <div>
+          <label><span>强度</span></label>
+          <input type="number" id="loraStrength" value="1.0" step="0.05" min="0.0" max="2.0" disabled />
+        </div>
+      </div>
+
+      <div class="adv-hint" id="loraHint">
+        50 步精修模式：可搭配 Spectrum / Turbo 跳步加速与负面提示词。
+      </div>
+    </div>
+
     <div>
       <label>
         <span>正向提示词（支持中英文 / 换行排字 / JSON Layout）</span>
         <button class="chip" type="button" id="demoPromptBtn">填入示例</button>
       </label>
-      <textarea id="prompt" rows="5" placeholder="例如：单张完整照片，一位身穿白色毛衣的女孩在阳光咖啡馆窗边看书，自然光，胶片质感..."></textarea>
+      <textarea id="prompt" rows="4" placeholder="例如：单张完整照片，一位身穿白色毛衣的女孩在阳光咖啡馆窗边看书，自然光，胶片质感..."></textarea>
     </div>
 
     <div>
       <label>
-        <span>负面提示词（可选）</span>
+        <span>负面提示词（CFG &gt; 1 时生效）</span>
         <button class="chip" type="button" id="antiCollageBtn">一键防拼图词</button>
       </label>
       <textarea id="negPrompt" rows="2" placeholder="不想出现的元素，例如 collage, split screen, worst quality"></textarea>
     </div>
 
     <div>
-      <label><span>速度与画质模式</span></label>
+      <label><span>采样加速模式</span></label>
       <select id="mode">
-        <option value="spectrum" selected>Spectrum（推荐 · ~15.8s · 4.25x 几乎无损）</option>
-        <option value="turbo">Turbo（极速抽卡 · ~12.5s · 5.38x）</option>
-        <option value="exact">Exact（50 步满算 · ~33.8s · 极致细节）</option>
+        <option value="spectrum" selected>Spectrum（50 步推荐 · ~15.8s · 4.25x 几乎无损）</option>
+        <option value="turbo">Turbo（50 步抽卡 · ~12.5s · 5.38x）</option>
+        <option value="exact">Exact（满算无跳步 · 4/8 步 LoRA 必选）</option>
       </select>
     </div>
 
     <div>
       <label><span>画布尺寸（16 的倍数）</span></label>
       <div class="row">
-        <input type="number" id="width" value="896" step="16" min="256" max="2048" placeholder="宽" />
-        <input type="number" id="height" value="1152" step="16" min="256" max="2048" placeholder="高" />
+        <input type="number" id="width" value="1024" step="16" min="256" max="2048" placeholder="宽" />
+        <input type="number" id="height" value="1024" step="16" min="256" max="2048" placeholder="高" />
       </div>
       <div class="chips" id="sizePresets">
-        <button class="chip" type="button" data-w="1024" data-h="1024">1:1 (1024)</button>
-        <button class="chip active" type="button" data-w="896" data-h="1152">3:4 人像</button>
+        <button class="chip active" type="button" data-w="1024" data-h="1024">1:1 (1024)</button>
+        <button class="chip" type="button" data-w="896" data-h="1152">3:4 人像</button>
         <button class="chip" type="button" data-w="832" data-h="1216">2:3 竖图</button>
         <button class="chip" type="button" data-w="1280" data-h="720">16:9 横图</button>
         <button class="chip" type="button" data-w="1456" data-h="1456">1456 高清</button>
@@ -487,7 +542,7 @@
       </div>
       <div>
         <label><span>CFG</span></label>
-        <input type="number" id="cfg" value="4.0" step="0.5" min="1.0" max="15.0" />
+        <input type="number" id="cfg" value="3.0" step="0.5" min="1.0" max="15.0" />
       </div>
       <div>
         <label><span>张数</span></label>
@@ -525,7 +580,7 @@
         <button class="chip" type="button" data-slg="">关闭 SLG（更写实）</button>
       </div>
       <div class="adv-hint">
-        官方推荐默认 Shift=5.0、跳层 22（22/24/26 均有助于稳定细节）；关闭 SLG 画面更偏真实但复杂构图偶尔易崩。
+        默认 Shift=5.0、跳层 22；启用 4/8 步 Turbo LoRA（CFG=1.0）时会自动跳过负向分支与 SLG。
       </div>
     </details>
 
@@ -551,7 +606,7 @@
     <div class="card preview-box" id="previewBox">
       <div class="placeholder" id="placeholder">
         输入提示词并点击「开始生成」<br />
-        <span style="font-size:12px;opacity:0.75;">异步任务队列已开启：支持实时步数进度、随时取消，且绕过 Cloudflare 100 秒超时限制</span>
+        <span style="font-size:12px;opacity:0.75;">支持 MOSS-Image-SFT / Kromoss 多底模与 4步/8步 FP32 Turbo LoRA 零重启热切换</span>
       </div>
       <div class="result-grid" id="resultGrid"></div>
     </div>
@@ -593,6 +648,8 @@ let currentJobId = null;
 let pollTimer = null;
 let modalItem = null;
 let activeBlobUrl = null;
+let modelCatalog = { models: [], loras: [], presets: [] };
+let initializedPreset = false;
 
 $("apiKey").value = localStorage.getItem(STORAGE_KEY) || "";
 $("apiKey").addEventListener("input", (e) => {
@@ -619,14 +676,168 @@ function parseSkipLayers(raw) {
   return txt.split(/[,，\s]+/).filter(Boolean).map((v) => Number(v)).filter((n) => Number.isInteger(n) && n >= 0 && n < 42);
 }
 
+function updateLoraHint() {
+  const lid = $("loraSelect").value;
+  const isNone = !lid || lid === "none";
+  $("loraStrength").disabled = isNone;
+  const hint = $("loraHint");
+  if (isNone) {
+    hint.className = "adv-hint";
+    hint.textContent = "50 步精修模式：可搭配 Spectrum / Turbo 跳步加速与负面提示词（推荐 CFG=3.0）。";
+  } else {
+    const info = modelCatalog.loras.find((l) => l.id === lid);
+    const steps = info?.rec_steps || Number($("steps").value || 8);
+    hint.className = "adv-hint ok";
+    hint.textContent = `已挂载 FP32 未合并 LoRA [${lid}]：推荐 ${steps} 步、CFG=${info?.rec_cfg ?? 1.0}、Exact 模式（免负向分支，约 3~5 秒/张）。`;
+  }
+}
+
+function highlightActivePreset() {
+  const m = $("baseModel").value;
+  const l = $("loraSelect").value;
+  const s = Number($("steps").value);
+  document.querySelectorAll("#presetChips .chip").forEach((btn) => {
+    const p = modelCatalog.presets.find((x) => x.id === btn.dataset.presetId);
+    const match = p && p.model === m && p.lora === l && Math.abs(p.steps - s) <= 2;
+    btn.classList.toggle("active", Boolean(match));
+  });
+}
+
+function applyPreset(p) {
+  if (!p || !p.available) return;
+  $("baseModel").value = p.model;
+  $("loraSelect").value = p.lora;
+  $("loraStrength").value = p.lora_strength ?? 1.0;
+  $("mode").value = p.mode || "exact";
+  $("steps").value = p.steps;
+  $("cfg").value = p.cfg;
+  $("shift").value = p.shift ?? 5.0;
+  $("skipLayers").value = Array.isArray(p.uncond_skip_layers) ? p.uncond_skip_layers.join(",") : "";
+  updateLoraHint();
+  highlightActivePreset();
+}
+
+function renderCatalog(cat, autoSelectBest = false) {
+  modelCatalog = cat;
+  const prevModel = $("baseModel").value;
+  const prevLora = $("loraSelect").value;
+
+  const mSel = $("baseModel");
+  mSel.innerHTML = "";
+  (cat.models || []).forEach((m) => {
+    const opt = document.createElement("option");
+    opt.value = m.id;
+    opt.textContent = m.label;
+    mSel.append(opt);
+  });
+  if ((cat.models || []).some((m) => m.id === prevModel)) mSel.value = prevModel;
+
+  const lSel = $("loraSelect");
+  lSel.innerHTML = "";
+  (cat.loras || []).forEach((l) => {
+    const opt = document.createElement("option");
+    opt.value = l.id;
+    opt.textContent = l.label;
+    lSel.append(opt);
+  });
+  if ((cat.loras || []).some((l) => l.id === prevLora)) lSel.value = prevLora;
+
+  const wrap = $("presetChips");
+  wrap.innerHTML = "";
+  (cat.presets || []).forEach((p) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "chip" + (p.lora !== "none" ? " turbo" : "");
+    btn.dataset.presetId = p.id;
+    btn.disabled = !p.available;
+    btn.textContent = p.label;
+    btn.title = p.available
+      ? `一键切换：${p.model} + ${p.lora} (${p.steps}步, CFG=${p.cfg})`
+      : "尚未下载该模型/LoRA，在魔搭运行 bash download_models.sh 后点「扫描新模型」";
+    btn.onclick = () => applyPreset(p);
+    wrap.append(btn);
+  });
+
+  if (autoSelectBest && !initializedPreset) {
+    const best = (cat.presets || []).find((p) => p.available);
+    if (best) {
+      applyPreset(best);
+      initializedPreset = true;
+    }
+  } else {
+    updateLoraHint();
+    highlightActivePreset();
+  }
+}
+
+async function loadModels(autoSelectBest = false) {
+  try {
+    const res = await fetch("/api/models");
+    if (!res.ok) return;
+    const cat = await res.json();
+    renderCatalog(cat, autoSelectBest);
+  } catch {}
+}
+
+$("reloadModelsBtn").addEventListener("click", async () => {
+  const btn = $("reloadModelsBtn");
+  btn.disabled = true;
+  btn.textContent = "扫描中...";
+  showError("");
+  try {
+    const res = await fetch("/api/models/reload", { method: "POST", headers: authHeaders() });
+    if (!res.ok) {
+      const msg = res.status === 401 ? "请先填写正确的 API Key 再扫描新模型" : `扫描失败 (HTTP ${res.status})`;
+      throw new Error(msg);
+    }
+    const data = await res.json();
+    renderCatalog(data, false);
+    const addedM = (data.added_models || []).length;
+    const addedL = (data.added_loras || []).length;
+    $("statusText").textContent = addedM || addedL
+      ? `已热加载 ${addedM} 个底模、${addedL} 个 LoRA`
+      : "扫描完成（无新增权重）";
+    checkHealth();
+  } catch (err) {
+    showError(err.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "扫描新模型";
+  }
+});
+
+$("loraSelect").addEventListener("change", () => {
+  const lid = $("loraSelect").value;
+  const info = modelCatalog.loras.find((l) => l.id === lid);
+  if (lid !== "none" && info) {
+    if (info.rec_steps) $("steps").value = info.rec_steps;
+    if (info.rec_cfg != null) $("cfg").value = info.rec_cfg;
+    if (info.rec_mode) $("mode").value = info.rec_mode;
+    if (info.rec_cfg === 1.0) $("skipLayers").value = "";
+  } else if (lid === "none") {
+    if (Number($("steps").value) <= 12) $("steps").value = 50;
+    if (Number($("cfg").value) === 1.0) $("cfg").value = 3.0;
+    if ($("mode").value === "exact") $("mode").value = "spectrum";
+    if (!$("skipLayers").value.trim()) $("skipLayers").value = "22";
+  }
+  updateLoraHint();
+  highlightActivePreset();
+});
+
+$("baseModel").addEventListener("change", highlightActivePreset);
+$("steps").addEventListener("change", highlightActivePreset);
+
 async function checkHealth() {
   try {
     const res = await fetch("/health");
     const data = await res.json();
-    $("precisionBadge").textContent = `${(data.precision || "int8").toUpperCase()} · AMD ROCm`;
+    const mCnt = (data.models || []).length || 1;
+    const lCnt = (data.loras || []).length || 0;
+    $("precisionBadge").textContent = `${(data.precision || "int8").toUpperCase()} · ${mCnt}底模 · ${lCnt}LoRA`;
     if (data.ready) {
       $("statusDot").className = "dot ok";
       $("statusText").textContent = "模型已就绪";
+      await loadModels(!initializedPreset);
     } else {
       $("statusDot").className = "dot";
       $("statusText").textContent = "模型加载/预热中...";
@@ -669,17 +880,30 @@ $("demoPromptBtn").addEventListener("click", () => {
   $("prompt").value = 'A wide view of a refrigerator beside a kitchen counter with a fruit bowl. A small sticky note on the refrigerator door is handwritten in Chinese：“\n记得买牛奶和鸡蛋！\n牛奶两盒，鸡蛋一打。\n顺便带一袋面包。”';
   $("width").value = 1024;
   $("height").value = 1024;
-  $("cfg").value = 3.0;
 });
 
 $("clearSeedBtn").addEventListener("click", () => { $("seed").value = ""; });
 $("refreshGalleryBtn").addEventListener("click", () => loadGallery(true));
 $("loadGalleryAuthBtn").addEventListener("click", () => loadGallery(true));
 
+function formatModelTag(meta) {
+  const m = meta.model === "kromoss" ? "Kromoss" : (meta.model === "moss-image-sft" || !meta.model ? "SFT" : meta.model);
+  if (meta.lora && meta.lora !== "none") return `${m}+${meta.lora}`;
+  return `${m}·${meta.mode || "spectrum"}`;
+}
+
 function applyParams(meta) {
   if (!meta) return;
   if (meta.prompt) $("prompt").value = meta.prompt;
   if (meta.negative_prompt !== undefined) $("negPrompt").value = meta.negative_prompt;
+  if (meta.model && [...$("baseModel").options].some((o) => o.value === meta.model)) {
+    $("baseModel").value = meta.model;
+  }
+  const loraVal = meta.lora || "none";
+  if ([...$("loraSelect").options].some((o) => o.value === loraVal)) {
+    $("loraSelect").value = loraVal;
+  }
+  if (meta.lora_strength != null) $("loraStrength").value = meta.lora_strength;
   if (meta.mode) $("mode").value = meta.mode;
   if (meta.steps) $("steps").value = meta.steps;
   if (meta.cfg) $("cfg").value = meta.cfg;
@@ -691,6 +915,8 @@ function applyParams(meta) {
     $("width").value = w;
     $("height").value = h;
   }
+  updateLoraHint();
+  highlightActivePreset();
 }
 
 function closeModal() {
@@ -705,9 +931,9 @@ function closeModal() {
 async function openModal(meta, directDataUrl = null) {
   modalItem = meta;
   $("modalPrompt").textContent = meta.prompt || meta.filename || "";
-  const parts = [];
-  if (meta.mode) parts.push(meta.mode);
+  const parts = [formatModelTag(meta)];
   if (meta.size) parts.push(meta.size);
+  if (meta.steps != null) parts.push(`${meta.steps}步`);
   if (meta.elapsed_sec != null) parts.push(`${meta.elapsed_sec}s`);
   if (meta.seed != null) parts.push(`seed=${meta.seed}`);
   if (meta.cfg != null) parts.push(`CFG=${meta.cfg}`);
@@ -724,7 +950,6 @@ async function openModal(meta, directDataUrl = null) {
     return;
   }
 
-  // 先显示缩略图占位，后台拉取完整原图 PNG
   if (meta.thumb_b64) {
     $("lightboxImg").src = `data:image/jpeg;base64,${meta.thumb_b64}`;
   }
@@ -804,7 +1029,7 @@ async function loadGallery(showErr = false) {
       const label = document.createElement("span");
       label.className = "hist-label";
       label.textContent = item.elapsed_sec != null
-        ? `${item.elapsed_sec}s · ${item.mode} · s${item.seed}`
+        ? `${item.elapsed_sec}s · ${formatModelTag(item)}`
         : item.filename;
 
       div.append(img, del, label);
@@ -833,7 +1058,7 @@ function renderResults(items, reqMeta) {
     const meta = document.createElement("div");
     meta.className = "img-meta";
     const info = document.createElement("span");
-    info.textContent = `耗时 ${item.elapsed_sec}s · seed=${item.seed} · ${item.stats || ""}`;
+    info.textContent = `${formatModelTag(reqMeta)} · ${item.elapsed_sec}s · seed=${item.seed} · ${item.stats || ""}`;
 
     const actions = document.createElement("div");
     actions.style.display = "flex";
@@ -848,7 +1073,7 @@ function renderResults(items, reqMeta) {
     const dl = document.createElement("a");
     dl.className = "btn-sm";
     dl.href = src;
-    dl.download = item.filename || `moss_${reqMeta.mode}_${reqMeta.size}_s${item.seed}.png`;
+    dl.download = item.filename || `moss_${reqMeta.model}_${reqMeta.size}_s${item.seed}.png`;
     dl.textContent = "下载原图";
 
     actions.append(reuseBtn, dl);
@@ -916,7 +1141,7 @@ async function pollJob(jobId, payload) {
       setRunningUI(false);
       return;
     }
-    pollTimer = setTimeout(() => pollJob(jobId, payload), 400);
+    pollTimer = setTimeout(() => pollJob(jobId, payload), 350);
   } catch (err) {
     showError(err.message || "轮询进度失败");
     setRunningUI(false);
@@ -937,6 +1162,9 @@ async function generate() {
   const payload = {
     prompt,
     negative_prompt: $("negPrompt").value.trim(),
+    model: $("baseModel").value || "moss-image-sft",
+    lora: $("loraSelect").value || "none",
+    lora_strength: Number($("loraStrength").value || 1.0),
     mode: $("mode").value,
     size: `${w}x${h}`,
     steps: Number($("steps").value || 50),

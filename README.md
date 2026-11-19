@@ -66,9 +66,10 @@ moss-image-amd-deploy/
 ├── web/index.html   # 内置中文暗色响应式 Web 画图工作台（适配电脑/手机浏览器）
 ├── gradio_ui.py     # 可选 Gradio WebUI（支持 share=True 免穿透公网链接）
 ├── compare_all.py   # 7 版本自动对比测速与 7 宫格拼图脚本
-├── start.sh         # 一键启动交互式出图（自动检查依赖与下载模型）
-├── start_api.sh     # 一键启动内置 Web UI + OpenAI API 服务（推荐）
-└── start_gradio.sh  # 一键启动 Gradio WebUI（免穿透备选）
+├── start.sh           # 一键启动交互式出图（自动检查依赖与下载模型）
+├── start_api.sh       # 一键启动内置 Web UI + OpenAI API 服务（推荐）
+├── download_models.sh # 一键下载 Kromoss 全量重训底模 + 4步/8步 Turbo LoRA（默认走 hf-mirror 断点续传）
+└── start_gradio.sh    # 一键启动 Gradio WebUI（免穿透备选）
 ```
 
 ---
@@ -142,10 +143,21 @@ python /mnt/workspace/moss-image/compare_all.py
 ### 方式一（推荐）：内置 Web UI + OpenAI API 二合一（`start_api.sh`）
 无需安装 Gradio，启动后在**同一个 `8000` 端口**同时提供：
 - **中文响应式 Web 画图工作台**（访问 `https://你的公网域名/`，手机/电脑浏览器直接打开）：
-  - **服务器持久化历史图库**：自动将生成图片与完整参数（Prompt / 种子 / CFG / Shift / SLG）落盘到 `outputs/` 并缓存缩略图，**刷新网页不丢失**，支持点击放大原图、一键回填全部参数与删除旧图；
-  - **异步任务队列 + 实时步数进度条 + 中途取消**：实时显示当前阶段（编码提示词 → 第 `X/50` 步 → VAE 解码），支持随时点「取消」在当前步结束后立即中止，同时**彻底规避 Cloudflare 免费隧道 100 秒 524 超时问题**；
+  - **多底模 + 4步/8步 Turbo LoRA 零重启秒切**：复用同一份 Qwen3.5-9B 文本编码器与 FLUX.2 VAE，在显存中常驻 `MOSS-Image-SFT` / `Kromoss`（70 万张高清图全量重训底模）与 FP32 未合并 Turbo LoRA（`Kromoss 8步 DMD2-GAN`、`SFT 4步 Turbo`、`SFT 8步 DMD`），4/8 步 CFG=1.0 免负向分支约 **3~5 秒一张**，支持点击「扫描新模型」热加载新下载的权重；
+  - **服务器持久化历史图库**：自动将生成图片与完整参数（底模 / LoRA / Prompt / 种子 / CFG / Shift / SLG）落盘到 `outputs/` 并缓存缩略图，**刷新网页不丢失**，支持点击放大原图、一键回填全部参数与删除旧图；
+  - **异步任务队列 + 实时步数进度条 + 中途取消**：实时显示当前阶段（编码提示词 → 第 `X/N` 步 → VAE 解码），支持随时点「取消」在当前步结束后立即中止；
   - **高级参数折叠面板**：支持调节 `Scheduler Shift` 与 `SLG 跳层（uncond_skip_layers，含 22/24/26/关闭预设）`，以及一键防拼图词、画幅预设、批量出图与 API Key 浏览器记忆。
-- **OpenAI 兼容接口**（`POST /v1/images/generations`）与 **直出 PNG 接口**（`POST /generate`）。
+- **OpenAI 兼容接口**（`POST /v1/images/generations`，支持 `model` / `lora` / `lora_strength` 字段）与 **直出 PNG 接口**（`POST /generate`）。
+
+#### 可选增强：一键下载 Kromoss 重训底模 + 4步/8步 Turbo LoRA
+
+```bash
+cd /mnt/workspace/moss-image
+bash download_models.sh          # 下载全部：3 个 4/8 步 LoRA (~3.6 GB) + Kromoss Transformer (~10.2 GB)
+# 也可按需单下：bash download_models.sh loras  或  bash download_models.sh kromoss
+```
+
+默认走国内 `https://hf-mirror.com` 镜像并支持断点续传（海外机器可加 `HF_ENDPOINT=https://huggingface.co`）。下载完成后重启 `start_api.sh` 或直接在网页端点击 **「扫描新模型」** 即可热加载。
 
 #### 第 1 步：启动服务（终端 1）
 
