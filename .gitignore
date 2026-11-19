@@ -1,0 +1,15 @@
+# 模型权重与大文件目录
+MOSS-Image-SFT/
+MOSS-Image-Base/
+outputs/
+compare/
+
+# 编译与调优缓存
+.inductor_cache/
+__pycache__/
+*.py[cod]
+tunableop_*.csv
+
+# 系统与虚拟环境
+.venv/
+.DS_Store
